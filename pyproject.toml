@@ -1,0 +1,10 @@
+[project]
+name = "auto-register"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "curl-cffi>=0.15.0",
+    "pydoll-python>=2.23.0",
+]

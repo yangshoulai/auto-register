@@ -1,0 +1,77 @@
+[account_service]
+# 留空时，账号服务会为每个账号随机生成 12 位强密码。
+specified_password = ""
+
+[account_export_service]
+# 当前默认使用 CPA 账号导出服务。
+provider = "cpa"
+
+[account_export_service.providers.cpa]
+base_url = "http://localhost:8317/v0/management"
+# CPA 管理接口密码，会通过 X-Management-Key 请求头发送。
+secret_key = "your-management-secret"
+
+[http_service]
+# 所有外部 HTTP 请求的默认超时时间，单位：秒。
+default_timeout = 30
+# 留空表示使用 curl_cffi 默认 UA。
+user_agent = ""
+# 示例："http://127.0.0.1:7890"；留空表示不使用代理。
+proxy_url = ""
+
+[logging]
+# 支持 DEBUG、INFO、WARNING、ERROR。INFO 会打印主要流程和外部请求。
+level = "INFO"
+# 终端彩色日志；如果输出到文件或控制台不支持颜色，可以改为 false。
+use_colors = true
+
+[register]
+# 等待邮箱验证码的最长时间，单位：秒。
+verification_code_wait_timeout = 60
+# 手机号不可用时，重新申请手机号并重新提交的最大次数。
+phone_number_retry_attempts = 5
+# 短信验证码等待超时后，重新从 Codex 账号选择节点开始的最大次数。
+sms_verification_retry_attempts = 5
+
+[email_service]
+# 当前仅支持自部署 OutlookMail 邮箱服务。
+provider = "outlook_mail"
+
+[email_service.providers.outlook_mail]
+base_url = "https://your-outlook-mail.example.com"
+admin_password = "your-outlook-mail-admin-password"
+# true 使用临时邮箱接口；false 使用自由邮箱接口中的 Outlook 邮箱池。
+use_temp_email = false
+
+[email_service.providers.outlook_mail.temp_email]
+provider = "cloudflare"
+channel_id = "1"
+domain = "temp-mail.example.com"
+
+[email_service.providers.outlook_mail.outlook]
+# 必须配置 OutlookMail 的分组 ID。
+pool_group_id = 1
+registered_group_id = 2
+
+[sms_service]
+# 留空表示不启用短信服务；当前支持 "hero_sms"、"sms_bower"。
+provider = "hero_sms"
+
+[sms_service.providers.hero_sms]
+base_url = "https://hero-sms.com/stubs/handler_api.php"
+api_key = "your-hero-sms-api-key"
+# HeroSMS 国家代码 泰国（52）、菲律宾（4）、智利（151）、喀麦隆（41）、英格兰（16）、南非（31）
+country_id = "31"
+max_price = 0.05
+# 等待短信验证码的最长时间，单位：秒。
+verification_code_wait_timeout = 125
+
+[sms_service.providers.sms_bower]
+base_url = "https://smsbower.page/stubs/handler_api.php"
+api_key = "your-sms-bower-api-key"
+# SMSBower 国家代码。
+country_id = "31"
+min_price = 0.045
+max_price = 0.055
+# 等待短信验证码的最长时间，单位：秒。
+verification_code_wait_timeout = 60
