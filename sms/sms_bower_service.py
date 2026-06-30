@@ -35,13 +35,13 @@ class SmsBowerService(SmsService):
     POLL_INTERVAL_SECONDS = 5
 
     def __init__(
-        self,
-        config: SmsBowerServiceConfig,
-        http_service: HttpService | None = None,
-        *,
-        poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
-        sleeper: Callable[[float], None] = sleep,
-        monotonic_clock: Callable[[], float] = monotonic,
+            self,
+            config: SmsBowerServiceConfig,
+            http_service: HttpService | None = None,
+            *,
+            poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
+            sleeper: Callable[[float], None] = sleep,
+            monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError("SMSBower 轮询间隔必须大于 0")
@@ -94,9 +94,9 @@ class SmsBowerService(SmsService):
         )
 
     def get_latest_verification_code(
-        self,
-        mobile_number: SmsMobileNumber,
-        sent_after: datetime,
+            self,
+            mobile_number: SmsMobileNumber,
+            sent_after: datetime,
     ) -> str | None:
         _ = sent_after
         activation_id = _require_mobile_attribute(mobile_number, "activation_id")
@@ -142,9 +142,9 @@ class SmsBowerService(SmsService):
         return _extract_verification_code(status_text)
 
     def callback(
-        self,
-        mobile_number: SmsMobileNumber,
-        is_verification_code_received: bool,
+            self,
+            mobile_number: SmsMobileNumber,
+            is_verification_code_received: bool,
     ) -> None:
         if is_verification_code_received:
             logger.info(
@@ -181,7 +181,7 @@ class SmsBowerService(SmsService):
         try:
             payload = response.json()
         except ValueError as exc:
-            raise SmsServiceError("SMSBower 返回了非 JSON 响应") from exc
+            raise SmsServiceError(f"SMSBower 返回了非 JSON 响应: {response.text}") from exc
 
         if not isinstance(payload, dict):
             raise SmsServiceError("SMSBower JSON 响应必须是对象")
@@ -210,7 +210,7 @@ class SmsBowerService(SmsService):
 
 
 def create_sms_bower_service_config(
-    provider_config: dict[str, Any],
+        provider_config: dict[str, Any],
 ) -> SmsBowerServiceConfig:
     return SmsBowerServiceConfig(
         base_url=_read_required_string(provider_config, "base_url"),

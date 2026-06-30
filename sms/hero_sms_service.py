@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from time import monotonic, sleep
 from typing import Any
 
-from core.logging_config import format_duration, mask_phone
 from core.http_service import HttpService
+from core.logging_config import format_duration, mask_phone
 from sms.sms_service import SmsMobileNumber, SmsService, SmsServiceError
 
 logger = logging.getLogger(__name__)
@@ -34,13 +34,13 @@ class HeroSmsService(SmsService):
     POLL_INTERVAL_SECONDS = 5
 
     def __init__(
-        self,
-        config: HeroSmsServiceConfig,
-        http_service: HttpService | None = None,
-        *,
-        poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
-        sleeper: Callable[[float], None] = sleep,
-        monotonic_clock: Callable[[], float] = monotonic,
+            self,
+            config: HeroSmsServiceConfig,
+            http_service: HttpService | None = None,
+            *,
+            poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
+            sleeper: Callable[[float], None] = sleep,
+            monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError("HeroSMS 轮询间隔必须大于 0")
@@ -94,9 +94,9 @@ class HeroSmsService(SmsService):
         )
 
     def get_latest_verification_code(
-        self,
-        mobile_number: SmsMobileNumber,
-        sent_after: datetime,
+            self,
+            mobile_number: SmsMobileNumber,
+            sent_after: datetime,
     ) -> str | None:
         activation_id = _require_mobile_attribute(mobile_number, "activation_id")
         deadline = self._monotonic_clock() + self._config.verification_code_wait_timeout
@@ -131,9 +131,9 @@ class HeroSmsService(SmsService):
             self._sleeper(min(self._poll_interval_seconds, remaining_seconds))
 
     def _query_latest_verification_code(
-        self,
-        activation_id: str,
-        sent_after: datetime,
+            self,
+            activation_id: str,
+            sent_after: datetime,
     ) -> str | None:
         payload = self._request_json(
             {
@@ -145,9 +145,9 @@ class HeroSmsService(SmsService):
         return _extract_latest_verification_code(payload, sent_after)
 
     def callback(
-        self,
-        mobile_number: SmsMobileNumber,
-        is_verification_code_received: bool,
+            self,
+            mobile_number: SmsMobileNumber,
+            is_verification_code_received: bool,
     ) -> None:
         if is_verification_code_received:
             logger.info(
@@ -182,7 +182,7 @@ class HeroSmsService(SmsService):
         try:
             payload = response.json()
         except ValueError as exc:
-            raise SmsServiceError("HeroSMS 返回了非 JSON 响应") from exc
+            raise SmsServiceError(f"HeroSMS 返回了非 JSON 响应: {response.text}") from exc
 
         if not isinstance(payload, dict):
             raise SmsServiceError("HeroSMS JSON 响应必须是对象")
@@ -205,7 +205,7 @@ class HeroSmsService(SmsService):
 
 
 def create_hero_sms_service_config(
-    provider_config: dict[str, Any],
+        provider_config: dict[str, Any],
 ) -> HeroSmsServiceConfig:
     return HeroSmsServiceConfig(
         base_url=_read_required_string(provider_config, "base_url"),
@@ -221,8 +221,8 @@ def create_hero_sms_service_config(
 
 
 def _extract_latest_verification_code(
-    payload: Mapping[str, Any],
-    sent_after: datetime,
+        payload: Mapping[str, Any],
+        sent_after: datetime,
 ) -> str | None:
     normalized_sent_after = _normalize_datetime(sent_after)
     oldest_datetime = datetime.min.replace(tzinfo=UTC)
