@@ -196,6 +196,37 @@ provider = "hero_sms"
 
 HeroSMS 和 SMSBower 都会在服务内部轮询等待验证码。流程节点只负责调用短信服务，不再自己轮询。
 
+### 本地激活池
+
+```toml
+[sms_service.activation_store]
+sqlite_path = "data/sms_activations.db"
+reuse_local_activation = true
+reuse_min_interval_seconds = 900
+```
+
+每次向短信服务商购买新激活后，程序都会把激活写入本地 SQLite。后续需要手机号时，会先查询本地仍可复用的激活；找不到才购买新手机号。
+
+本地复用过滤规则：
+
+- `provider` 必须匹配当前短信服务。
+- `service_code` 必须为固定值 `dr`。
+- `is_available = 1`。
+- `can_get_another_sms = 1`。
+- `activation_end_time` 必须晚于当前时间。
+- 当前注册流程已经尝试过的 `activation_id` 会被排除。
+- `last_verification_code_received_at` 为空，或距离当前时间至少超过 `reuse_min_interval_seconds`。
+
+查询结果按 `activation_end_time ASC` 排序，优先使用最接近失效的激活。
+
+获取验证码成功后，本地库会更新：
+
+- `last_verification_code_received_at`
+- `verification_code_received_count`
+- `verification_codes_json`
+
+手机号提交失败、验证码超时或取消激活时，本地记录会标记为不可用。
+
 ### HeroSMS
 
 ```toml
@@ -207,6 +238,8 @@ max_price = 0.05
 verification_code_wait_timeout = 125
 ```
 
+HeroSMS 新激活响应中包含 `activationEndTime`，本地库直接使用该字段作为激活结束时间。复用旧激活前会调用 `setStatus`，并使用 `status=3` 请求新的验证码。
+
 ### SMSBower
 
 ```toml
@@ -217,7 +250,10 @@ country_id = "31"
 min_price = 0.045
 max_price = 0.055
 verification_code_wait_timeout = 60
+activation_valid_seconds = 1500
 ```
+
+SMSBower 新激活没有返回结束时间，程序使用 `activationTime + activation_valid_seconds` 填充本地激活结束时间，默认 25 分钟。复用旧激活前会调用 `setStatus status=3`，只有 `ACCESS_READY` 和 `ACCESS_RETRY_GET` 会被视为成功。
 
 ## 账号导出服务
 

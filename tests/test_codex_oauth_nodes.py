@@ -136,8 +136,10 @@ class FakeSmsService:
         self.codes = codes or []
         self.callbacks: list[dict[str, object]] = []
         self.code_calls: list[dict[str, object]] = []
+        self.excluded_activation_ids_calls: list[set[str]] = []
 
-    def get_mobile_number(self) -> SmsMobileNumber:
+    def get_mobile_number(self, excluded_activation_ids=None) -> SmsMobileNumber:
+        self.excluded_activation_ids_calls.append(set(excluded_activation_ids or ()))
         return self.mobile_number
 
     def get_latest_verification_code(

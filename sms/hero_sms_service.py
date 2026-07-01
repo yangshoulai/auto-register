@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic, sleep
 from typing import Any
 
+from core.config import SmsActivationStoreConfig
 from core.http_service import HttpService
 from core.logging_config import format_duration, mask_phone
+from sms.activation_store import (
+    SmsActivationRecord,
+    SmsActivationStore,
+    VerificationCodeEntry,
+)
 from sms.sms_service import SmsMobileNumber, SmsService, SmsServiceError
 
 logger = logging.getLogger(__name__)
@@ -23,41 +29,120 @@ class HeroSmsServiceConfig:
     verification_code_wait_timeout: float = 125
 
 
+@dataclass(frozen=True)
+class HeroVerificationCodeResult:
+    code: str
+    text: str = ""
+    received_at: datetime | None = None
+    raw: Mapping[str, Any] | None = None
+
+
 class HeroSmsService(SmsService):
     """
-    对接 HeroSMS手机号激活接口。
+    对接 HeroSMS 手机号激活接口。
     """
 
     PROVIDER = "hero_sms"
     SERVICE_CODE = "dr"
     CANCEL_STATUS = 8
+    REQUEST_NEW_SMS_STATUS = 3
     POLL_INTERVAL_SECONDS = 5
+    CLEANUP_UNRECEIVED_MIN_AGE_SECONDS = 120
 
     def __init__(
             self,
             config: HeroSmsServiceConfig,
             http_service: HttpService | None = None,
             *,
+            activation_store: SmsActivationStore | None = None,
+            activation_store_config: SmsActivationStoreConfig | None = None,
             poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
             sleeper: Callable[[float], None] = sleep,
             monotonic_clock: Callable[[], float] = monotonic,
+            now: Callable[[], datetime] | None = None,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError("HeroSMS 轮询间隔必须大于 0")
         self._config = config
         self._http_service = http_service or HttpService()
+        self._activation_store = activation_store
+        self._activation_store_config = (
+                activation_store_config or SmsActivationStoreConfig()
+        )
         self._poll_interval_seconds = poll_interval_seconds
         self._sleeper = sleeper
         self._monotonic_clock = monotonic_clock
-        logger.debug(
-            "HeroSMS 服务已初始化: country_id=%s, max_price=%s, code_timeout=%s",
+        self._now = now or (lambda: datetime.now(UTC))
+        logger.info(
+            "HeroSMS 服务已初始化: country_id=%s, max_price=%s, code_timeout=%s, "
+            "reuse_local=%s",
             config.country_id,
             config.max_price,
             format_duration(config.verification_code_wait_timeout),
+            self._activation_store_config.reuse_local_activation,
         )
+        self._cleanup_unreceived_activations()
 
-    def get_mobile_number(self) -> SmsMobileNumber:
-        logger.debug("HeroSMS 申请手机号")
+    def get_mobile_number(
+            self,
+            excluded_activation_ids: Collection[str] | None = None,
+    ) -> SmsMobileNumber:
+        if (
+                self._activation_store is not None
+                and self._activation_store_config.reuse_local_activation
+        ):
+            reused_mobile_number = self._get_reusable_local_mobile_number(
+                excluded_activation_ids,
+            )
+            if reused_mobile_number is not None:
+                return reused_mobile_number
+
+        logger.info("HeroSMS 申请新手机号")
+        return self._request_new_mobile_number()
+
+    def _get_reusable_local_mobile_number(
+            self,
+            excluded_activation_ids: Collection[str] | None,
+    ) -> SmsMobileNumber | None:
+        if self._activation_store is None:
+            return None
+
+        records = self._activation_store.list_reusable_activations(
+            provider=self.PROVIDER,
+            service_code=self.SERVICE_CODE,
+            excluded_activation_ids=excluded_activation_ids,
+            now=self._now(),
+            reuse_min_interval_seconds=(
+                self._activation_store_config.reuse_min_interval_seconds
+            ),
+        )
+        for record in records:
+            try:
+                logger.info(
+                    "HeroSMS 尝试复用本地激活: mobile=%s, activation_id=%s, end_time=%s",
+                    mask_phone(record.mobile_number),
+                    record.activation_id,
+                    record.activation_end_time.isoformat(),
+                )
+                self._request_new_sms_for_activation(record.activation_id)
+            except Exception as exc:
+                logger.exception(
+                    "HeroSMS 本地激活请求新验证码失败，标记不可用: activation_id=%s",
+                    record.activation_id,
+                )
+                self._mark_activation_unavailable(record.activation_id, str(exc))
+                continue
+
+            logger.info(
+                "HeroSMS 本地激活复用成功: mobile=%s, activation_id=%s",
+                mask_phone(record.mobile_number),
+                record.activation_id,
+            )
+            return _create_mobile_number_from_record(record, reused_activation=True)
+
+        return None
+
+    def _request_new_mobile_number(self) -> SmsMobileNumber:
         payload = self._request_json(
             {
                 "action": "getNumberV2",
@@ -69,28 +154,82 @@ class HeroSmsService(SmsService):
         )
         activation_id = _read_response_string(payload, "activationId")
         mobile_number = _read_response_string(payload, "phoneNumber")
-        logger.debug(
-            "HeroSMS 手机号申请成功: mobile=%s, activation_id=%s, cost=%s",
+        activation_time = _read_response_datetime(payload, "activationTime")
+        activation_end_time = _read_response_datetime(payload, "activationEndTime")
+        logger.info(
+            "HeroSMS 新手机号申请成功: mobile=%s, activation_id=%s, cost=%s",
             mask_phone(mobile_number),
             activation_id,
             payload.get("activationCost"),
         )
 
-        return SmsMobileNumber(
+        record = SmsActivationRecord(
+            provider=self.PROVIDER,
+            service_code=self.SERVICE_CODE,
             mobile_number=mobile_number,
-            attributes={
-                "provider": self.PROVIDER,
-                "activation_id": activation_id,
-                "activation_cost": payload.get("activationCost"),
-                "currency": payload.get("currency"),
-                "country_code": payload.get("countryCode"),
-                "country_phone_code": payload.get("countryPhoneCode"),
-                "can_get_another_sms": payload.get("canGetAnotherSms"),
-                "activation_time": payload.get("activationTime"),
-                "activation_end_time": payload.get("activationEndTime"),
-                "activation_operator": payload.get("activationOperator"),
-                "raw": payload,
-            },
+            activation_id=activation_id,
+            activation_cost=payload.get("activationCost"),
+            currency=payload.get("currency"),
+            country_code=payload.get("countryCode"),
+            country_phone_code=payload.get("countryPhoneCode"),
+            activation_operator=payload.get("activationOperator"),
+            activation_time=activation_time,
+            activation_end_time=activation_end_time,
+            can_get_another_sms=_is_enabled_flag(payload.get("canGetAnotherSms")),
+            raw=payload,
+        )
+        if self._activation_store is not None:
+            self._activation_store.upsert_activation(record)
+        return _create_mobile_number_from_record(record, reused_activation=False)
+
+    def _cleanup_unreceived_activations(self) -> None:
+        if self._activation_store is None:
+            return
+
+        try:
+            records = self._activation_store.list_unreceived_activations_for_cleanup(
+                provider=self.PROVIDER,
+                now=self._now(),
+                min_age_seconds=self.CLEANUP_UNRECEIVED_MIN_AGE_SECONDS,
+            )
+        except Exception:
+            logger.exception("HeroSMS 查询本地待清理激活失败，已忽略")
+            return
+
+        for record in records:
+            try:
+                logger.info(
+                    "HeroSMS 清理未收到验证码的激活: mobile=%s, activation_id=%s",
+                    mask_phone(record.mobile_number),
+                    record.activation_id,
+                )
+                self._request_raw(
+                    {
+                        "action": "setStatus",
+                        "id": record.activation_id,
+                        "status": self.CANCEL_STATUS,
+                        "api_key": self._config.api_key,
+                    }
+                )
+            except Exception:
+                logger.exception(
+                    "HeroSMS 清理未收验证码激活失败，已忽略: activation_id=%s",
+                    record.activation_id,
+                )
+            finally:
+                self._mark_activation_unavailable(
+                    record.activation_id,
+                    "初始化清理未收到验证码的 HeroSMS 激活",
+                )
+
+    def _request_new_sms_for_activation(self, activation_id: str) -> None:
+        self._request_raw(
+            {
+                "action": "setStatus",
+                "id": activation_id,
+                "status": self.REQUEST_NEW_SMS_STATUS,
+                "api_key": self._config.api_key,
+            }
         )
 
     def get_latest_verification_code(
@@ -104,20 +243,21 @@ class HeroSmsService(SmsService):
 
         while True:
             poll_count += 1
-            logger.debug(
+            logger.info(
                 "HeroSMS 查询验证码: mobile=%s, activation_id=%s, poll=%d",
                 mask_phone(mobile_number.mobile_number),
                 activation_id,
                 poll_count,
             )
-            code = self._query_latest_verification_code(activation_id, sent_after)
-            if code:
+            result = self._query_latest_verification_code(activation_id, sent_after)
+            if result is not None:
+                self._record_verification_code(activation_id, result)
                 logger.info(
                     "HeroSMS 已获取验证码: mobile=%s, poll=%d",
                     mask_phone(mobile_number.mobile_number),
                     poll_count,
                 )
-                return code
+                return result.code
 
             remaining_seconds = deadline - self._monotonic_clock()
             if remaining_seconds <= 0:
@@ -134,7 +274,7 @@ class HeroSmsService(SmsService):
             self,
             activation_id: str,
             sent_after: datetime,
-    ) -> str | None:
+    ) -> HeroVerificationCodeResult | None:
         payload = self._request_json(
             {
                 "action": "getStatusV2",
@@ -150,14 +290,19 @@ class HeroSmsService(SmsService):
             is_verification_code_received: bool,
     ) -> None:
         if is_verification_code_received:
-            logger.debug(
+            logger.info(
                 "HeroSMS 回调: 已收到验证码，不取消激活: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )
             return
 
+        activation_id = _read_mobile_attribute(mobile_number, "activation_id")
+        if activation_id is not None:
+            self._mark_activation_unavailable(activation_id, "未收到验证码或手机号不可用")
+
         try:
-            activation_id = _require_mobile_attribute(mobile_number, "activation_id")
+            if activation_id is None:
+                activation_id = _require_mobile_attribute(mobile_number, "activation_id")
             logger.warning(
                 "HeroSMS 回调: 未收到验证码，取消激活: mobile=%s, activation_id=%s",
                 mask_phone(mobile_number.mobile_number),
@@ -176,6 +321,34 @@ class HeroSmsService(SmsService):
                 "HeroSMS 取消激活回调失败，已忽略并继续流程: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )
+
+    def _record_verification_code(
+            self,
+            activation_id: str,
+            result: HeroVerificationCodeResult,
+    ) -> None:
+        if self._activation_store is None:
+            return
+        self._activation_store.record_verification_code(
+            provider=self.PROVIDER,
+            activation_id=activation_id,
+            entry=VerificationCodeEntry(
+                code=result.code,
+                text=result.text,
+                received_at=result.received_at or self._now(),
+                raw=result.raw or {},
+            ),
+        )
+
+    def _mark_activation_unavailable(self, activation_id: str, error: str) -> None:
+        if self._activation_store is None:
+            return
+        self._activation_store.mark_unavailable(
+            provider=self.PROVIDER,
+            activation_id=activation_id,
+            error=error,
+            failed_at=self._now(),
+        )
 
     def _request_json(self, params: dict[str, Any]) -> dict[str, Any]:
         response = self._request_raw(params)
@@ -220,17 +393,41 @@ def create_hero_sms_service_config(
     )
 
 
+def _create_mobile_number_from_record(
+        record: SmsActivationRecord,
+        *,
+        reused_activation: bool,
+) -> SmsMobileNumber:
+    return SmsMobileNumber(
+        mobile_number=record.mobile_number,
+        attributes={
+            "provider": record.provider,
+            "activation_id": record.activation_id,
+            "activation_cost": record.activation_cost,
+            "currency": record.currency,
+            "country_code": record.country_code,
+            "country_phone_code": record.country_phone_code,
+            "can_get_another_sms": record.can_get_another_sms,
+            "activation_time": record.activation_time.isoformat(),
+            "activation_end_time": record.activation_end_time.isoformat(),
+            "activation_operator": record.activation_operator,
+            "reused_activation": reused_activation,
+            "raw": dict(record.raw),
+        },
+    )
+
+
 def _extract_latest_verification_code(
         payload: Mapping[str, Any],
         sent_after: datetime,
-) -> str | None:
+) -> HeroVerificationCodeResult | None:
     normalized_sent_after = _normalize_datetime(sent_after)
     oldest_datetime = datetime.min.replace(tzinfo=UTC)
-    candidates: list[tuple[str, datetime | None, int]] = []
+    candidates: list[tuple[HeroVerificationCodeResult, datetime | None, int]] = []
 
     for priority, channel_name in ((1, "sms"), (0, "call")):
         channel_payload = payload.get(channel_name)
-        if not isinstance(channel_payload, dict):
+        if not isinstance(channel_payload, Mapping):
             continue
 
         code = _read_optional_code(channel_payload)
@@ -241,12 +438,23 @@ def _extract_latest_verification_code(
         if received_at is not None and received_at < normalized_sent_after:
             continue
 
-        candidates.append((code, received_at, priority))
+        candidates.append(
+            (
+                HeroVerificationCodeResult(
+                    code=code,
+                    text=str(channel_payload.get("text") or ""),
+                    received_at=received_at,
+                    raw=channel_payload,
+                ),
+                received_at,
+                priority,
+            )
+        )
 
     if not candidates:
         return None
 
-    code, _, _ = max(
+    result, _, _ = max(
         candidates,
         key=lambda candidate: (
             candidate[1] is not None,
@@ -254,7 +462,7 @@ def _extract_latest_verification_code(
             candidate[2],
         ),
     )
-    return code
+    return result
 
 
 def _read_optional_code(payload: Mapping[str, Any]) -> str | None:
@@ -266,6 +474,14 @@ def _read_optional_code(payload: Mapping[str, Any]) -> str | None:
     if not code or code.lower() == "null":
         return None
     return code
+
+
+def _read_response_datetime(payload: Mapping[str, Any], key: str) -> datetime:
+    value = payload.get(key)
+    parsed_value = _parse_optional_datetime(value)
+    if parsed_value is None:
+        raise SmsServiceError(f"HeroSMS 响应缺少有效时间字段: {key}")
+    return parsed_value
 
 
 def _parse_optional_datetime(value: Any) -> datetime | None:
@@ -297,13 +513,33 @@ def _normalize_datetime(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _require_mobile_attribute(mobile_number: SmsMobileNumber, key: str) -> str:
+def _read_mobile_attribute(
+        mobile_number: SmsMobileNumber,
+        key: str,
+) -> str | None:
     value = mobile_number.get_attribute(key)
     if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _require_mobile_attribute(mobile_number: SmsMobileNumber, key: str) -> str:
+    value = _read_mobile_attribute(mobile_number, key)
+    if value is None:
         raise SmsServiceError(
             f"手机号 {mobile_number.mobile_number} 缺少 {key}，无法调用 HeroSMS"
         )
-    return str(value)
+    return value
+
+
+def _is_enabled_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 def _read_response_string(payload: Mapping[str, Any], key: str) -> str:

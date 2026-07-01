@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from core.config import SmsServiceConfig, settings
+from core.config import PROJECT_ROOT, SmsActivationStoreConfig, SmsServiceConfig, settings
 from core.http_service import HttpService
+from sms.activation_store import SmsActivationStore
 
 
 class SmsServiceError(RuntimeError):
@@ -34,9 +35,15 @@ class SmsMobileNumber:
 
 class SmsService(ABC):
     @abstractmethod
-    def get_mobile_number(self) -> SmsMobileNumber:
+    def get_mobile_number(
+        self,
+        excluded_activation_ids: Collection[str] | None = None,
+    ) -> SmsMobileNumber:
         """
         从短信服务商获取一个新的手机号。
+
+        excluded_activation_ids 用于排除本轮注册已经尝试过的激活，避免重试时
+        反复拿到同一个手机号。
         """
 
     @abstractmethod
@@ -67,6 +74,8 @@ class SmsService(ABC):
 def _build_hero_sms_service(
     provider_config: dict[str, Any],
     http_service: HttpService | None,
+    activation_store: SmsActivationStore | None,
+    activation_store_config: SmsActivationStoreConfig,
 ) -> SmsService:
     from sms.hero_sms_service import (
         HeroSmsService,
@@ -76,12 +85,16 @@ def _build_hero_sms_service(
     return HeroSmsService(
         create_hero_sms_service_config(provider_config),
         http_service=http_service,
+        activation_store=activation_store,
+        activation_store_config=activation_store_config,
     )
 
 
 def _build_sms_bower_service(
     provider_config: dict[str, Any],
     http_service: HttpService | None,
+    activation_store: SmsActivationStore | None,
+    activation_store_config: SmsActivationStoreConfig,
 ) -> SmsService:
     from sms.sms_bower_service import (
         SmsBowerService,
@@ -91,10 +104,20 @@ def _build_sms_bower_service(
     return SmsBowerService(
         create_sms_bower_service_config(provider_config),
         http_service=http_service,
+        activation_store=activation_store,
+        activation_store_config=activation_store_config,
     )
 
 
-SmsServiceBuilder = Callable[[dict[str, Any], HttpService | None], SmsService]
+SmsServiceBuilder = Callable[
+    [
+        dict[str, Any],
+        HttpService | None,
+        SmsActivationStore | None,
+        SmsActivationStoreConfig,
+    ],
+    SmsService,
+]
 
 
 SMS_SERVICE_BUILDERS: dict[str, SmsServiceBuilder] = {
@@ -121,4 +144,19 @@ def create_sms_service(
             f"当前支持: {supported_providers}"
         )
 
-    return service_builder(sms_config.provider_config, http_service)
+    activation_store = SmsActivationStore(
+        _resolve_sqlite_path(sms_config.activation_store.sqlite_path)
+    )
+    return service_builder(
+        sms_config.provider_config,
+        http_service,
+        activation_store,
+        sms_config.activation_store,
+    )
+
+
+def _resolve_sqlite_path(sqlite_path: str) -> str:
+    path = PROJECT_ROOT / sqlite_path
+    if sqlite_path.startswith("/"):
+        return sqlite_path
+    return str(path)

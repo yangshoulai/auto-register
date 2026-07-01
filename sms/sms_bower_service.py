@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep
 from typing import Any
 
-from core.logging_config import format_duration, mask_phone
+from core.config import SmsActivationStoreConfig
 from core.http_service import HttpService
+from core.logging_config import format_duration, mask_phone
+from sms.activation_store import (
+    SmsActivationRecord,
+    SmsActivationStore,
+    VerificationCodeEntry,
+)
 from sms.sms_service import SmsMobileNumber, SmsService, SmsServiceError
 
 logger = logging.getLogger(__name__)
@@ -22,16 +28,26 @@ class SmsBowerServiceConfig:
     max_price: float
     min_price: float = 0
     verification_code_wait_timeout: float = 60
+    activation_valid_seconds: float = 1500
+
+
+@dataclass(frozen=True)
+class SmsBowerVerificationCodeResult:
+    code: str
+    text: str = ""
+    raw: str = ""
 
 
 class SmsBowerService(SmsService):
     """
-    对接 SMSBower手机号激活接口。
+    对接 SMSBower 手机号激活接口。
     """
 
     PROVIDER = "sms_bower"
     SERVICE_CODE = "dr"
     CANCEL_STATUS = 8
+    REQUEST_NEW_SMS_STATUS = 3
+    REQUEST_NEW_SMS_SUCCESS_STATUSES = {"ACCESS_READY", "ACCESS_RETRY_GET"}
     POLL_INTERVAL_SECONDS = 5
 
     def __init__(
@@ -39,27 +55,96 @@ class SmsBowerService(SmsService):
             config: SmsBowerServiceConfig,
             http_service: HttpService | None = None,
             *,
+            activation_store: SmsActivationStore | None = None,
+            activation_store_config: SmsActivationStoreConfig | None = None,
             poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
             sleeper: Callable[[float], None] = sleep,
             monotonic_clock: Callable[[], float] = monotonic,
+            now: Callable[[], datetime] | None = None,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError("SMSBower 轮询间隔必须大于 0")
         self._config = config
         self._http_service = http_service or HttpService()
+        self._activation_store = activation_store
+        self._activation_store_config = (
+            activation_store_config or SmsActivationStoreConfig()
+        )
         self._poll_interval_seconds = poll_interval_seconds
         self._sleeper = sleeper
         self._monotonic_clock = monotonic_clock
-        logger.debug(
-            "SMSBower 服务已初始化: country_id=%s, min_price=%s, max_price=%s, code_timeout=%s",
+        self._now = now or (lambda: datetime.now(UTC))
+        logger.info(
+            "SMSBower 服务已初始化: country_id=%s, min_price=%s, max_price=%s, "
+            "code_timeout=%s, activation_valid=%s, reuse_local=%s",
             config.country_id,
             config.min_price,
             config.max_price,
             format_duration(config.verification_code_wait_timeout),
+            format_duration(config.activation_valid_seconds),
+            self._activation_store_config.reuse_local_activation,
         )
 
-    def get_mobile_number(self) -> SmsMobileNumber:
-        logger.debug("SMSBower 申请手机号")
+    def get_mobile_number(
+            self,
+            excluded_activation_ids: Collection[str] | None = None,
+    ) -> SmsMobileNumber:
+        if (
+            self._activation_store is not None
+            and self._activation_store_config.reuse_local_activation
+        ):
+            reused_mobile_number = self._get_reusable_local_mobile_number(
+                excluded_activation_ids,
+            )
+            if reused_mobile_number is not None:
+                return reused_mobile_number
+
+        logger.info("SMSBower 申请新手机号")
+        return self._request_new_mobile_number()
+
+    def _get_reusable_local_mobile_number(
+            self,
+            excluded_activation_ids: Collection[str] | None,
+    ) -> SmsMobileNumber | None:
+        if self._activation_store is None:
+            return None
+
+        records = self._activation_store.list_reusable_activations(
+            provider=self.PROVIDER,
+            service_code=self.SERVICE_CODE,
+            excluded_activation_ids=excluded_activation_ids,
+            now=self._now(),
+            reuse_min_interval_seconds=(
+                self._activation_store_config.reuse_min_interval_seconds
+            ),
+        )
+        for record in records:
+            try:
+                logger.info(
+                    "SMSBower 尝试复用本地激活: mobile=%s, activation_id=%s, end_time=%s",
+                    mask_phone(record.mobile_number),
+                    record.activation_id,
+                    record.activation_end_time.isoformat(),
+                )
+                self._request_new_sms_for_activation(record.activation_id)
+            except Exception as exc:
+                logger.exception(
+                    "SMSBower 本地激活请求新验证码失败，标记不可用: activation_id=%s",
+                    record.activation_id,
+                )
+                self._mark_activation_unavailable(record.activation_id, str(exc))
+                continue
+
+            logger.info(
+                "SMSBower 本地激活复用成功: mobile=%s, activation_id=%s",
+                mask_phone(record.mobile_number),
+                record.activation_id,
+            )
+            return _create_mobile_number_from_record(record, reused_activation=True)
+
+        return None
+
+    def _request_new_mobile_number(self) -> SmsMobileNumber:
         payload = self._request_json(
             {
                 "api_key": self._config.api_key,
@@ -72,26 +157,45 @@ class SmsBowerService(SmsService):
         )
         activation_id = _read_response_string(payload, "activationId")
         mobile_number = _read_response_string(payload, "phoneNumber")
+        activation_time = _read_response_datetime(payload, "activationTime")
+        activation_end_time = activation_time + timedelta(
+            seconds=self._config.activation_valid_seconds,
+        )
         logger.info(
-            "SMSBower 手机号申请成功: mobile=%s, activation_id=%s, cost=%s",
+            "SMSBower 新手机号申请成功: mobile=%s, activation_id=%s, cost=%s",
             mask_phone(mobile_number),
             activation_id,
             payload.get("activationCost"),
         )
 
-        return SmsMobileNumber(
+        record = SmsActivationRecord(
+            provider=self.PROVIDER,
+            service_code=self.SERVICE_CODE,
             mobile_number=mobile_number,
-            attributes={
-                "provider": self.PROVIDER,
-                "activation_id": activation_id,
-                "activation_cost": payload.get("activationCost"),
-                "country_code": payload.get("countryCode"),
-                "can_get_another_sms": payload.get("canGetAnotherSms"),
-                "activation_time": payload.get("activationTime"),
-                "activation_operator": payload.get("activationOperator"),
-                "raw": payload,
-            },
+            activation_id=activation_id,
+            activation_cost=payload.get("activationCost"),
+            country_code=payload.get("countryCode"),
+            activation_operator=payload.get("activationOperator"),
+            activation_time=activation_time,
+            activation_end_time=activation_end_time,
+            can_get_another_sms=_is_enabled_flag(payload.get("canGetAnotherSms")),
+            raw=payload,
         )
+        if self._activation_store is not None:
+            self._activation_store.upsert_activation(record)
+        return _create_mobile_number_from_record(record, reused_activation=False)
+
+    def _request_new_sms_for_activation(self, activation_id: str) -> None:
+        status_text = self._request_text(
+            {
+                "api_key": self._config.api_key,
+                "action": "setStatus",
+                "status": self.REQUEST_NEW_SMS_STATUS,
+                "id": activation_id,
+            }
+        )
+        if status_text not in self.REQUEST_NEW_SMS_SUCCESS_STATUSES:
+            raise SmsServiceError(f"SMSBower 请求新验证码失败: {status_text}")
 
     def get_latest_verification_code(
             self,
@@ -105,20 +209,21 @@ class SmsBowerService(SmsService):
 
         while True:
             poll_count += 1
-            logger.debug(
+            logger.info(
                 "SMSBower 查询验证码: mobile=%s, activation_id=%s, poll=%d",
                 mask_phone(mobile_number.mobile_number),
                 activation_id,
                 poll_count,
             )
-            code = self._query_latest_verification_code(activation_id)
-            if code:
-                logger.debug(
+            result = self._query_latest_verification_code(activation_id)
+            if result is not None:
+                self._record_verification_code(activation_id, result)
+                logger.info(
                     "SMSBower 已获取验证码: mobile=%s, poll=%d",
                     mask_phone(mobile_number.mobile_number),
                     poll_count,
                 )
-                return code
+                return result.code
 
             remaining_seconds = deadline - self._monotonic_clock()
             if remaining_seconds <= 0:
@@ -131,7 +236,10 @@ class SmsBowerService(SmsService):
 
             self._sleeper(min(self._poll_interval_seconds, remaining_seconds))
 
-    def _query_latest_verification_code(self, activation_id: str) -> str | None:
+    def _query_latest_verification_code(
+            self,
+            activation_id: str,
+    ) -> SmsBowerVerificationCodeResult | None:
         status_text = self._request_text(
             {
                 "api_key": self._config.api_key,
@@ -147,14 +255,19 @@ class SmsBowerService(SmsService):
             is_verification_code_received: bool,
     ) -> None:
         if is_verification_code_received:
-            logger.debug(
+            logger.info(
                 "SMSBower 回调: 已收到验证码，不取消激活: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )
             return
 
+        activation_id = _read_mobile_attribute(mobile_number, "activation_id")
+        if activation_id is not None:
+            self._mark_activation_unavailable(activation_id, "未收到验证码或手机号不可用")
+
         try:
-            activation_id = _require_mobile_attribute(mobile_number, "activation_id")
+            if activation_id is None:
+                activation_id = _require_mobile_attribute(mobile_number, "activation_id")
             logger.warning(
                 "SMSBower 回调: 未收到验证码，取消激活: mobile=%s, activation_id=%s",
                 mask_phone(mobile_number.mobile_number),
@@ -175,6 +288,34 @@ class SmsBowerService(SmsService):
                 "SMSBower 取消激活回调失败，已忽略并继续流程: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )
+
+    def _record_verification_code(
+            self,
+            activation_id: str,
+            result: SmsBowerVerificationCodeResult,
+    ) -> None:
+        if self._activation_store is None:
+            return
+        self._activation_store.record_verification_code(
+            provider=self.PROVIDER,
+            activation_id=activation_id,
+            entry=VerificationCodeEntry(
+                code=result.code,
+                text=result.text,
+                received_at=self._now(),
+                raw={"status_text": result.raw},
+            ),
+        )
+
+    def _mark_activation_unavailable(self, activation_id: str, error: str) -> None:
+        if self._activation_store is None:
+            return
+        self._activation_store.mark_unavailable(
+            provider=self.PROVIDER,
+            activation_id=activation_id,
+            error=error,
+            failed_at=self._now(),
+        )
 
     def _request_json(self, params: dict[str, Any]) -> dict[str, Any]:
         response = self._request_raw(params)
@@ -223,19 +364,52 @@ def create_sms_bower_service_config(
             "verification_code_wait_timeout",
             60,
         ),
+        activation_valid_seconds=_read_float(
+            provider_config,
+            "activation_valid_seconds",
+            1500,
+        ),
     )
 
 
-def _extract_verification_code(status_text: str) -> str | None:
+def _create_mobile_number_from_record(
+        record: SmsActivationRecord,
+        *,
+        reused_activation: bool,
+) -> SmsMobileNumber:
+    return SmsMobileNumber(
+        mobile_number=record.mobile_number,
+        attributes={
+            "provider": record.provider,
+            "activation_id": record.activation_id,
+            "activation_cost": record.activation_cost,
+            "country_code": record.country_code,
+            "can_get_another_sms": record.can_get_another_sms,
+            "activation_time": record.activation_time.isoformat(),
+            "activation_end_time": record.activation_end_time.isoformat(),
+            "activation_operator": record.activation_operator,
+            "reused_activation": reused_activation,
+            "raw": dict(record.raw),
+        },
+    )
+
+
+def _extract_verification_code(status_text: str) -> SmsBowerVerificationCodeResult | None:
     normalized_status = status_text.strip()
     if normalized_status == "STATUS_WAIT_CODE":
         return None
     if normalized_status == "STATUS_CANCEL":
         raise SmsServiceError("SMSBower 激活已取消")
     if normalized_status.startswith("STATUS_OK:"):
-        return _read_status_code(normalized_status, "STATUS_OK:")
+        code = _read_status_code(normalized_status, "STATUS_OK:")
+        if code is None:
+            return None
+        return SmsBowerVerificationCodeResult(code=code, raw=status_text)
     if normalized_status.startswith("STATUS_WAIT_RETRY:"):
-        return _read_status_code(normalized_status, "STATUS_WAIT_RETRY:")
+        code = _read_status_code(normalized_status, "STATUS_WAIT_RETRY:")
+        if code is None:
+            return None
+        return SmsBowerVerificationCodeResult(code=code, raw=status_text)
 
     raise SmsServiceError(f"SMSBower 返回了未知短信状态: {status_text}")
 
@@ -250,13 +424,75 @@ def _read_response_text(response: Any) -> str:
     return response.text.strip()
 
 
-def _require_mobile_attribute(mobile_number: SmsMobileNumber, key: str) -> str:
+def _read_response_datetime(payload: dict[str, Any], key: str) -> datetime:
+    value = payload.get(key)
+    parsed_value = _parse_optional_datetime(value)
+    if parsed_value is None:
+        raise SmsServiceError(f"SMSBower 响应缺少有效时间字段: {key}")
+    return parsed_value
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return _normalize_datetime(value)
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return datetime.fromtimestamp(value, tz=UTC)
+    if not isinstance(value, str):
+        return None
+
+    stripped_value = value.strip()
+    if stripped_value == "" or stripped_value.startswith("0000-00-00"):
+        return None
+    if stripped_value.isdigit():
+        return datetime.fromtimestamp(int(stripped_value), tz=UTC)
+
+    iso_value = stripped_value.replace("Z", "+00:00")
+    try:
+        return _normalize_datetime(datetime.fromisoformat(iso_value))
+    except ValueError:
+        try:
+            return datetime.strptime(stripped_value, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=UTC
+            )
+        except ValueError:
+            return None
+
+
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _read_mobile_attribute(
+        mobile_number: SmsMobileNumber,
+        key: str,
+) -> str | None:
     value = mobile_number.get_attribute(key)
     if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _require_mobile_attribute(mobile_number: SmsMobileNumber, key: str) -> str:
+    value = _read_mobile_attribute(mobile_number, key)
+    if value is None:
         raise SmsServiceError(
             f"手机号 {mobile_number.mobile_number} 缺少 {key}，无法调用 SMSBower"
         )
-    return str(value)
+    return value
+
+
+def _is_enabled_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 def _read_response_string(payload: dict[str, Any], key: str) -> str:

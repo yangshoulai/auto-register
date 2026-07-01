@@ -28,9 +28,19 @@ class EmailServiceConfig:
 
 
 @dataclass(frozen=True)
+class SmsActivationStoreConfig:
+    sqlite_path: str = "data/sms_activations.db"
+    reuse_local_activation: bool = True
+    reuse_min_interval_seconds: float = 900
+
+
+@dataclass(frozen=True)
 class SmsServiceConfig:
     provider: str | None = None
     provider_config: dict[str, Any] = field(default_factory=dict)
+    activation_store: SmsActivationStoreConfig = field(
+        default_factory=SmsActivationStoreConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -122,6 +132,10 @@ def load_config(path: str | Path = CONFIG_PATH) -> AppConfig:
         )
 
     sms_provider = _read_optional_string(sms_service_config, "provider")
+    sms_activation_store_config = _read_table(
+        sms_service_config,
+        "activation_store",
+    )
     sms_provider_config: dict[str, Any] = {}
     if sms_provider is not None:
         sms_providers_config = _read_table(sms_service_config, "providers")
@@ -157,6 +171,23 @@ def load_config(path: str | Path = CONFIG_PATH) -> AppConfig:
         sms_service=SmsServiceConfig(
             provider=sms_provider,
             provider_config=sms_provider_config,
+            activation_store=SmsActivationStoreConfig(
+                sqlite_path=_read_optional_string(
+                    sms_activation_store_config,
+                    "sqlite_path",
+                )
+                or "data/sms_activations.db",
+                reuse_local_activation=_read_bool(
+                    sms_activation_store_config,
+                    "reuse_local_activation",
+                    True,
+                ),
+                reuse_min_interval_seconds=_read_float(
+                    sms_activation_store_config,
+                    "reuse_min_interval_seconds",
+                    900,
+                ),
+            ),
         ),
         register=RegisterConfig(
             verification_code_wait_timeout=_read_float(

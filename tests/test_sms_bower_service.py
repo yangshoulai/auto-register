@@ -300,10 +300,12 @@ class SmsBowerServiceTest(unittest.TestCase):
                 "country_id": "31",
                 "max_price": "0.027",
                 "verification_code_wait_timeout": "75",
+                "activation_valid_seconds": "1800",
             }
         )
 
         self.assertEqual(config.verification_code_wait_timeout, 75)
+        self.assertEqual(config.activation_valid_seconds, 1800)
 
     def test_sms_bower_config_uses_default_verification_code_wait_timeout(self) -> None:
         config = create_sms_bower_service_config(
@@ -316,6 +318,7 @@ class SmsBowerServiceTest(unittest.TestCase):
         )
 
         self.assertEqual(config.verification_code_wait_timeout, 60)
+        self.assertEqual(config.activation_valid_seconds, 1500)
 
 
 if __name__ == "__main__":

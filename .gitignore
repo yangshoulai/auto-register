@@ -14,3 +14,5 @@ wheels/
 
 # Local secrets and runtime configuration
 config.toml
+data/*.db
+data/*.db-*

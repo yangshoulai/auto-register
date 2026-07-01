@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from datetime import UTC, datetime
 
 from pydoll.browser.tab import Tab
@@ -27,6 +28,7 @@ class AddPhoneNumberNode(RegisterNode):
     CURRENT_TAB_STATE_KEY = DEFAULT_CURRENT_TAB_STATE_KEY
     ACCOUNT_STATE_KEY = FillEmailAndSubmitNode.ACCOUNT_STATE_KEY
     SMS_MOBILE_NUMBER_STATE_KEY = "sms_mobile_number"
+    TRIED_SMS_ACTIVATION_IDS_STATE_KEY = "tried_sms_activation_ids"
     PHONE_SUBMITTED_AT_STATE_KEY = "phone_submitted_at"
     PHONE_VERIFICATION_URL_STATE_KEY = "phone_verification_url"
     PHONE_INPUT_SELECTOR = "input[id='tel']"
@@ -37,10 +39,12 @@ class AddPhoneNumberNode(RegisterNode):
     PHONE_USED_ERROR_TEXT = "电话号码已被使用"
     PHONE_INVALID_ERROR_TEXT = "电话号码无效"
     PHONE_WHATSAPP_ONLY_ERROR_TEXT = "请继续通过 WhatsApp 发送验证码"
+    PHONE_MAX_ACCOUNT_LINKED_ERROR_TEXT = "此电话号码已关联到可关联的最多账户"
     RETRYABLE_PHONE_ERROR_TEXTS = (
         PHONE_USED_ERROR_TEXT,
         PHONE_INVALID_ERROR_TEXT,
         PHONE_WHATSAPP_ONLY_ERROR_TEXT,
+        PHONE_MAX_ACCOUNT_LINKED_ERROR_TEXT,
     )
     PHONE_VERIFICATION_URL_PART = "/phone-verification"
     RESULT_WAIT_TIMEOUT_SECONDS = 30
@@ -114,8 +118,15 @@ class AddPhoneNumberNode(RegisterNode):
         if ctx.app_context is None or ctx.app_context.sms_service is None:
             raise RuntimeError("注册上下文缺少短信服务")
 
-        logger.info("向短信服务申请手机号")
-        mobile_number = ctx.app_context.sms_service.get_mobile_number()
+        excluded_activation_ids = _read_tried_activation_ids(ctx)
+        logger.info(
+            "向短信服务申请手机号: excluded_activation_ids=%s",
+            sorted(excluded_activation_ids),
+        )
+        mobile_number = ctx.app_context.sms_service.get_mobile_number(
+            excluded_activation_ids=excluded_activation_ids,
+        )
+        _remember_tried_activation_id(ctx, mobile_number)
         normalized_mobile_number = _normalize_mobile_number(mobile_number.mobile_number)
         account.mobile = normalized_mobile_number
         logger.info(
@@ -273,6 +284,38 @@ def _normalize_mobile_number(mobile_number: str) -> str:
     if normalized_mobile_number.startswith("+"):
         return normalized_mobile_number[1:]
     return normalized_mobile_number
+
+
+def _read_tried_activation_ids(ctx: RegisterContext) -> set[str]:
+    value = ctx.get_value(AddPhoneNumberNode.TRIED_SMS_ACTIVATION_IDS_STATE_KEY)
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, Collection):
+        return {str(item) for item in value if item is not None and str(item) != ""}
+    return set()
+
+
+def _remember_tried_activation_id(
+        ctx: RegisterContext,
+        mobile_number: SmsMobileNumber,
+) -> None:
+    activation_id = mobile_number.get_attribute("activation_id")
+    if activation_id is None or activation_id == "":
+        return
+
+    tried_activation_ids = _read_tried_activation_ids(ctx)
+    tried_activation_ids.add(str(activation_id))
+    ctx.set_value(
+        AddPhoneNumberNode.TRIED_SMS_ACTIVATION_IDS_STATE_KEY,
+        tried_activation_ids,
+    )
+    logger.info(
+        "记录本轮已尝试短信激活: activation_id=%s, tried_count=%d",
+        activation_id,
+        len(tried_activation_ids),
+    )
 
 
 def _create_result_data(

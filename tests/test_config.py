@@ -91,6 +91,11 @@ use_colors = false
 [sms_service]
 provider = "hero_sms"
 
+[sms_service.activation_store]
+sqlite_path = "runtime/sms.db"
+reuse_local_activation = false
+reuse_min_interval_seconds = 600
+
 [sms_service.providers.hero_sms]
 base_url = "https://hero-sms.com/stubs/handler_api.php"
 api_key = "api-key"
@@ -113,6 +118,12 @@ verification_code_wait_timeout = 125
                 "max_price": 12.5,
                 "verification_code_wait_timeout": 125,
             },
+        )
+        self.assertEqual(config.sms_service.activation_store.sqlite_path, "runtime/sms.db")
+        self.assertFalse(config.sms_service.activation_store.reuse_local_activation)
+        self.assertEqual(
+            config.sms_service.activation_store.reuse_min_interval_seconds,
+            600,
         )
 
     def test_load_config_reads_account_export_service_provider_options(self) -> None:

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
-from core.config import SmsServiceConfig
+from core.config import SmsActivationStoreConfig, SmsServiceConfig
 from core.http_service import HttpService
+from sms.activation_store import SmsActivationRecord, SmsActivationStore
 from sms.hero_sms_service import (
     HeroSmsService,
     HeroSmsServiceConfig,
@@ -106,6 +109,46 @@ class HeroSmsServiceTest(unittest.TestCase):
                     "maxPrice": 12.5,
                     "api_key": "api-key",
                 },
+            },
+        )
+
+    def test_get_mobile_number_reuses_local_activation_before_buying_number(self) -> None:
+        session = FakeSession([{"status": "ok"}])
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider=HeroSmsService.PROVIDER,
+                    service_code=HeroSmsService.SERVICE_CODE,
+                    mobile_number="79584000001",
+                    activation_id="635468021",
+                    activation_time=datetime(2022, 6, 1, 16, 59, tzinfo=UTC),
+                    activation_end_time=datetime(2022, 6, 1, 18, 59, tzinfo=UTC),
+                    can_get_another_sms=True,
+                )
+            )
+            service = HeroSmsService(
+                build_config(),
+                http_service=build_http_service(session),
+                activation_store=store,
+                activation_store_config=SmsActivationStoreConfig(
+                    reuse_min_interval_seconds=900,
+                ),
+                now=lambda: datetime(2022, 6, 1, 17, 15, tzinfo=UTC),
+            )
+
+            mobile_number = service.get_mobile_number()
+
+        self.assertEqual(mobile_number.mobile_number, "79584000001")
+        self.assertEqual(mobile_number.get_attribute("activation_id"), "635468021")
+        self.assertTrue(mobile_number.get_attribute("reused_activation"))
+        self.assertEqual(
+            session.requests[0]["params"],
+            {
+                "action": "setStatus",
+                "id": "635468021",
+                "status": 3,
+                "api_key": "api-key",
             },
         )
 

@@ -57,6 +57,14 @@ registered_group_id = 2
 # 留空表示不启用短信服务；当前支持 "hero_sms"、"sms_bower"。
 provider = "hero_sms"
 
+[sms_service.activation_store]
+# 本地短信激活 SQLite 数据库路径；相对路径按项目根目录解析。
+sqlite_path = "data/sms_activations.db"
+# 是否优先复用本地库中仍可再次收验证码的激活号码。
+reuse_local_activation = true
+# 同一个激活距离上次成功获取验证码至少过去多少秒后才允许复用，默认 15 分钟。
+reuse_min_interval_seconds = 900
+
 [sms_service.providers.hero_sms]
 base_url = "https://hero-sms.com/stubs/handler_api.php"
 api_key = "your-hero-sms-api-key"
@@ -75,3 +83,5 @@ min_price = 0.045
 max_price = 0.055
 # 等待短信验证码的最长时间，单位：秒。
 verification_code_wait_timeout = 60
+# SMSBower 新激活没有返回结束时间，使用 activationTime + 该配置填充本地激活结束时间，默认 25 分钟。
+activation_valid_seconds = 1500
