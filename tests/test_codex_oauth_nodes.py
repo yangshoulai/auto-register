@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from account.account_service import Account
 from account_export.account_export_service import (
@@ -428,6 +429,40 @@ class WaitSmsVerificationCodeNodeTest(unittest.TestCase):
                 "mobile_number": sms_service.mobile_number,
                 "is_verification_code_received": False,
             },
+        )
+
+    def test_execute_retries_oauth_without_resend_or_callback_when_phone_recently_used(
+        self,
+    ) -> None:
+        async def fill_text_success(*args, **kwargs) -> None:
+            return None
+
+        tab = FakeSmsCodeTab(
+            error_text=WaitSmsVerificationCodeNode.PHONE_RECENTLY_USED_ERROR_TEXT,
+        )
+        sms_service = FakeSmsService(["654321"])
+        ctx = _sms_context(tab, sms_service)
+        node = WaitSmsVerificationCodeNode()
+
+        with patch(
+            "register.nodes.wait_sms_verification_code_node."
+            "PydollClipboardInput.fill_text",
+            new=fill_text_success,
+        ):
+            result = asyncio.run(node.execute(ctx))
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.status,
+            WaitSmsVerificationCodeNode.RETRY_SELECT_CODEX_ACCOUNT_STATUS,
+        )
+        self.assertEqual(tab.resend_button.clicks, [])
+        self.assertEqual(sms_service.callbacks, [])
+        self.assertEqual(
+            result.data[
+                WaitSmsVerificationCodeNode.SMS_VERIFICATION_RETRY_COUNT_STATE_KEY
+            ],
+            1,
         )
 
 

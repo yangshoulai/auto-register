@@ -119,6 +119,7 @@ class HeroSmsService(SmsService):
             reuse_min_interval_seconds=(
                 self._activation_store_config.reuse_min_interval_seconds
             ),
+            min_remaining_seconds=self._config.verification_code_wait_timeout,
         )
         for record in records:
             try:
@@ -298,6 +299,15 @@ class HeroSmsService(SmsService):
                 "HeroSMS 回调: 已收到验证码，不取消激活: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )
+            activation_id = _read_mobile_attribute(mobile_number, "activation_id")
+            if activation_id is not None:
+                try:
+                    self._mark_verification_code_usable(activation_id)
+                except Exception:
+                    logger.exception(
+                        "HeroSMS 更新验证码可用时间失败，已忽略: activation_id=%s",
+                        activation_id,
+                    )
             return
 
         activation_id = _read_mobile_attribute(mobile_number, "activation_id")
@@ -352,6 +362,15 @@ class HeroSmsService(SmsService):
             activation_id=activation_id,
             error=error,
             failed_at=self._now(),
+        )
+
+    def _mark_verification_code_usable(self, activation_id: str) -> None:
+        if self._activation_store is None:
+            return
+        self._activation_store.mark_verification_code_usable(
+            provider=self.PROVIDER,
+            activation_id=activation_id,
+            usable_at=self._now(),
         )
 
     def _request_json(self, params: dict[str, Any]) -> dict[str, Any]:

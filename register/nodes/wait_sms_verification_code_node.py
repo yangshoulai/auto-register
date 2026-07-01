@@ -42,6 +42,7 @@ class WaitSmsVerificationCodeNode(RegisterNode):
     CONSENT_URL_PART = "/sign-in-with-chatgpt/codex/consent"
     CODE_FILL_MAX_ATTEMPTS = 3
     SUBMIT_RESULT_WAIT_TIMEOUT_SECONDS = 30
+    PHONE_RECENTLY_USED_ERROR_TEXT = "此电话号码近期已被使用。请稍后再试。"
     SUCCESS_STATUS = "phone_verified"
     RETRY_SELECT_CODEX_ACCOUNT_STATUS = "sms_verification_retry_select_codex_account"
     FAILED_STATUS = "phone_verification_failed"
@@ -135,20 +136,36 @@ class WaitSmsVerificationCodeNode(RegisterNode):
                 )
 
             if result.condition_name == "submit_error":
+                error_text = str(result.value)
+                if self.PHONE_RECENTLY_USED_ERROR_TEXT in error_text:
+                    logger.warning(
+                        "手机号近期已使用，跳过短信重发和短信回调，准备重新进入 OAuth 认证: error=%s",
+                        error_text,
+                    )
+                    return self._build_select_codex_account_retry_result(
+                        ctx,
+                        current_url=current_url,
+                        code=code,
+                        error=error_text,
+                        failure_status=self.ERROR_STATUS,
+                        failure_message=error_text,
+                        retry_log_message="手机号近期已使用，准备重新进入 Codex 账号选择节点",
+                    )
+
                 if resend_attempts < self.MAX_RESEND_ATTEMPTS:
-                    logger.warning("短信验证码提交出现错误，点击重发后再次等待: error=%s", result.value)
+                    logger.warning("短信验证码提交出现错误，点击重发后再次等待: error=%s", error_text)
                     sent_after = await self._resend_code(tab)
                     resend_attempts += 1
                     continue
 
-                logger.warning("短信验证码提交错误且已无重发次数，回调取消短信交易: error=%s", result.value)
+                logger.warning("短信验证码提交错误且已无重发次数，回调取消短信交易: error=%s", error_text)
                 ctx.app_context.sms_service.callback(
                     mobile_number,
                     is_verification_code_received=False,
                 )
                 return NodeResult.fail(
                     status=self.ERROR_STATUS,
-                    error=str(result.value),
+                    error=error_text,
                     data=_create_result_data(code=code, current_url=current_url),
                 )
 
@@ -168,6 +185,27 @@ class WaitSmsVerificationCodeNode(RegisterNode):
             ctx: RegisterContext,
             current_url: str,
     ) -> NodeResult:
+        return self._build_select_codex_account_retry_result(
+            ctx,
+            current_url=current_url,
+            code="",
+            error="等待短信验证码超时",
+            failure_status=self.TIMEOUT_STATUS,
+            failure_message="等待短信验证码超时",
+            retry_log_message="短信验证码等待超时，准备重新进入 Codex 账号选择节点",
+        )
+
+    def _build_select_codex_account_retry_result(
+            self,
+            ctx: RegisterContext,
+            *,
+            current_url: str,
+            code: str,
+            error: str,
+            failure_status: str,
+            failure_message: str,
+            retry_log_message: str,
+    ) -> NodeResult:
         if ctx.app_context is None:
             raise RuntimeError("注册上下文缺少 AppContext，无法判断短信重试次数")
 
@@ -179,26 +217,28 @@ class WaitSmsVerificationCodeNode(RegisterNode):
         )
         if current_retry_count >= max_retry_attempts:
             logger.warning(
-                "短信验证码等待超时且已达到重试上限: retry_count=%d/%d",
+                "OAuth 认证重试已达到上限: reason=%s, retry_count=%d/%d",
+                error,
                 current_retry_count,
                 max_retry_attempts,
             )
             return NodeResult.fail(
-                status=self.TIMEOUT_STATUS,
-                error="等待短信验证码超时",
-                data=_create_result_data(code="", current_url=current_url),
+                status=failure_status,
+                error=failure_message,
+                data=_create_result_data(code=code, current_url=current_url),
             )
 
         next_retry_count = current_retry_count + 1
         logger.warning(
-            "短信验证码等待超时，准备重新进入 Codex 账号选择节点: retry_count=%d/%d",
+            "%s: retry_count=%d/%d",
+            retry_log_message,
             next_retry_count,
             max_retry_attempts,
         )
         return NodeResult.ok(
             status=self.RETRY_SELECT_CODEX_ACCOUNT_STATUS,
             data={
-                **_create_result_data(code="", current_url=current_url),
+                **_create_result_data(code=code, current_url=current_url),
                 self.SMS_VERIFICATION_RETRY_COUNT_STATE_KEY: next_retry_count,
             },
         )

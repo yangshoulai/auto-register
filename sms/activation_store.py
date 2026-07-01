@@ -30,6 +30,7 @@ class SmsActivationRecord:
     activation_operator: Any = None
     verification_code_received_count: int = 0
     last_verification_code_received_at: datetime | None = None
+    last_verification_code_usable_at: datetime | None = None
     verification_codes: tuple[Mapping[str, Any], ...] = ()
     is_available: bool = True
     last_error: str | None = None
@@ -129,17 +130,21 @@ class SmsActivationStore:
             excluded_activation_ids: Collection[str] | None,
             now: datetime,
             reuse_min_interval_seconds: float,
+            min_remaining_seconds: float = 0,
     ) -> list[SmsActivationRecord]:
         normalized_now = _normalize_datetime(now)
-        min_received_at = normalized_now - timedelta(
+        min_usable_at = normalized_now - timedelta(
             seconds=reuse_min_interval_seconds,
+        )
+        min_activation_end_time = normalized_now + timedelta(
+            seconds=min_remaining_seconds,
         )
         excluded_ids = {str(value) for value in excluded_activation_ids or ()}
         params: list[Any] = [
             provider,
             service_code,
-            _serialize_datetime(normalized_now),
-            _serialize_datetime(min_received_at),
+            _serialize_datetime(min_activation_end_time),
+            _serialize_datetime(min_usable_at),
         ]
         excluded_clause = ""
         if excluded_ids:
@@ -156,8 +161,8 @@ class SmsActivationStore:
               AND can_get_another_sms = 1
               AND activation_end_time > ?
               AND (
-                    last_verification_code_received_at IS NULL
-                    OR last_verification_code_received_at <= ?
+                    last_verification_code_usable_at IS NULL
+                    OR last_verification_code_usable_at <= ?
                   )
               {excluded_clause}
             ORDER BY activation_end_time ASC
@@ -167,10 +172,12 @@ class SmsActivationStore:
 
         records = [_row_to_record(row) for row in rows]
         logger.info(
-            "本地可复用短信激活查询完成: provider=%s, count=%d, excluded_count=%d",
+            "本地可复用短信激活查询完成: provider=%s, count=%d, excluded_count=%d, "
+            "min_remaining=%s",
             provider,
             len(records),
             len(excluded_ids),
+            min_remaining_seconds,
         )
         return records
 
@@ -264,6 +271,36 @@ class SmsActivationStore:
             )
         logger.info(
             "短信激活验证码记录已更新: provider=%s, activation_id=%s",
+            provider,
+            activation_id,
+        )
+
+    def mark_verification_code_usable(
+            self,
+            *,
+            provider: str,
+            activation_id: str,
+            usable_at: datetime | None = None,
+    ) -> None:
+        normalized_usable_at = _normalize_datetime(usable_at or _beijing_now())
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE sms_activations
+                SET last_verification_code_usable_at = ?,
+                    updated_at                       = ?
+                WHERE provider = ?
+                  AND activation_id = ?
+                """,
+                (
+                    _serialize_datetime(normalized_usable_at),
+                    _serialize_datetime(_beijing_now()),
+                    provider,
+                    activation_id,
+                ),
+            )
+        logger.info(
+            "短信激活验证码可用时间已更新: provider=%s, activation_id=%s",
             provider,
             activation_id,
         )
@@ -362,6 +399,8 @@ class SmsActivationStore:
                     0,
                     last_verification_code_received_at
                     TEXT,
+                    last_verification_code_usable_at
+                    TEXT,
                     verification_codes_json
                     TEXT
                     NOT
@@ -436,6 +475,9 @@ def _row_to_record(row: sqlite3.Row) -> SmsActivationRecord:
         verification_code_received_count=int(row["verification_code_received_count"]),
         last_verification_code_received_at=_parse_optional_datetime(
             row["last_verification_code_received_at"]
+        ),
+        last_verification_code_usable_at=_parse_optional_datetime(
+            row["last_verification_code_usable_at"]
         ),
         verification_codes=tuple(_json_loads_list(row["verification_codes_json"])),
         is_available=bool(row["is_available"]),
