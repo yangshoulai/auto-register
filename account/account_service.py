@@ -88,7 +88,7 @@ class AccountService:
             age=self._random.randint(MIN_AGE, MAX_AGE),
             password=account_config.specified_password or self._create_password(),
         )
-        logger.info(
+        logger.debug(
             "账号基础资料已创建: name=%s %s, age=%s, password_source=%s",
             account.first_name,
             account.last_name,

@@ -64,7 +64,7 @@ async def wait_for_any_condition(
         raise ValueError("poll_interval_seconds 必须大于 0")
 
     condition_names = [condition.name for condition in conditions]
-    logger.info(
+    logger.debug(
         "开始等待页面条件: conditions=%s, timeout=%s, interval=%s",
         condition_names,
         format_duration(timeout_seconds),
@@ -75,7 +75,7 @@ async def wait_for_any_condition(
         for condition in conditions:
             value = await condition.check()
             if value is not None and value is not False:
-                logger.info(
+                logger.debug(
                     "页面条件已满足: condition=%s, elapsed=%s",
                     condition.name,
                     format_duration(elapsed_seconds),

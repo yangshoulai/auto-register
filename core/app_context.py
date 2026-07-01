@@ -13,7 +13,6 @@ from core.http_service import HttpService
 from email.email_service import EmailService, create_email_service
 from sms.sms_service import SmsService, create_sms_service
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -53,14 +52,14 @@ def create_app_context(
     创建应用上下文，并在启动阶段初始化所有当前必需服务。
     """
     app_config = config or settings
-    logger.info("创建 HTTP 服务: timeout=%s, proxy=%s", app_config.http_service.default_timeout, app_config.http_service.proxy_url or "")
+    logger.debug("创建 HTTP 服务: timeout=%s, proxy=%s", app_config.http_service.default_timeout, app_config.http_service.proxy_url or "")
     resolved_http_service = http_service or HttpService(
         default_timeout=app_config.http_service.default_timeout,
         default_headers=app_config.http_service.default_headers,
         proxy_url=app_config.http_service.proxy_url,
     )
 
-    logger.info("创建业务服务: email_provider=%s, sms_provider=%s, account_export_provider=%s",
+    logger.debug("创建业务服务: email_provider=%s, sms_provider=%s, account_export_provider=%s",
         app_config.email_service.provider,
         app_config.sms_service.provider or "",
         app_config.account_export_service.provider,

@@ -11,7 +11,6 @@ from typing import Any, Protocol
 from core.app_context import AppContext
 from core.logging_config import format_duration
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -57,19 +56,19 @@ class NodeResult:
 
     @classmethod
     def ok(
-        cls,
-        status: str = "success",
-        data: Mapping[str, Any] | None = None,
+            cls,
+            status: str = "success",
+            data: Mapping[str, Any] | None = None,
     ) -> NodeResult:
         return cls(success=True, status=status, data=data or {})
 
     @classmethod
     def fail(
-        cls,
-        status: str = "failed",
-        *,
-        error: str | None = None,
-        data: Mapping[str, Any] | None = None,
+            cls,
+            status: str = "failed",
+            *,
+            error: str | None = None,
+            data: Mapping[str, Any] | None = None,
     ) -> NodeResult:
         return cls(success=False, status=status, data=data or {}, error=error)
 
@@ -109,10 +108,10 @@ class RegisterNode(ABC):
     """
 
     def __init__(
-        self,
-        name: str,
-        *,
-        retry_policy: RetryPolicy | None = None,
+            self,
+            name: str,
+            *,
+            retry_policy: RetryPolicy | None = None,
     ) -> None:
         if not name:
             raise ValueError("节点名称不能为空")
@@ -153,10 +152,10 @@ class Transition:
 
     @classmethod
     def always(
-        cls,
-        target_node: str | None,
-        *,
-        description: str = "",
+            cls,
+            target_node: str | None,
+            *,
+            description: str = "",
     ) -> Transition:
         return cls(
             target_node=target_node,
@@ -166,11 +165,11 @@ class Transition:
 
     @classmethod
     def when_status(
-        cls,
-        status: str,
-        target_node: str | None,
-        *,
-        description: str = "",
+            cls,
+            status: str,
+            target_node: str | None,
+            *,
+            description: str = "",
     ) -> Transition:
         return cls(
             target_node=target_node,
@@ -215,10 +214,10 @@ class RegisterFlow:
             raise RegisterFlowError(f"注册流程节点不存在: {node_name}") from exc
 
     def find_next_node(
-        self,
-        node_name: str,
-        result: NodeResult,
-        ctx: RegisterContext,
+            self,
+            node_name: str,
+            result: NodeResult,
+            ctx: RegisterContext,
     ) -> str | None:
         transition = self.find_next_transition(node_name, result, ctx)
         if transition is None:
@@ -226,10 +225,10 @@ class RegisterFlow:
         return transition.target_node
 
     def find_next_transition(
-        self,
-        node_name: str,
-        result: NodeResult,
-        ctx: RegisterContext,
+            self,
+            node_name: str,
+            result: NodeResult,
+            ctx: RegisterContext,
     ) -> Transition | None:
         for transition in self.transitions.get(node_name, ()):
             if transition.matches(result, ctx):
@@ -262,11 +261,11 @@ class RegisterFlowRunner:
     """
 
     def __init__(
-        self,
-        *,
-        max_steps: int = 100,
-        sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        context_initializers: Sequence[RegisterContextInitializer] | None = None,
+            self,
+            *,
+            max_steps: int = 100,
+            sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+            context_initializers: Sequence[RegisterContextInitializer] | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps 必须大于等于 1")
@@ -275,9 +274,9 @@ class RegisterFlowRunner:
         self._context_initializers = tuple(context_initializers or ())
 
     async def run(
-        self,
-        flow: RegisterFlow,
-        ctx: RegisterContext | None = None,
+            self,
+            flow: RegisterFlow,
+            ctx: RegisterContext | None = None,
     ) -> RegisterFlowResult:
         runtime_ctx = ctx or RegisterContext()
         logger.info(
@@ -287,7 +286,7 @@ class RegisterFlowRunner:
             self._max_steps,
         )
         await self._initialize_context(runtime_ctx)
-        logger.info(
+        logger.debug(
             "注册流程上下文初始化完成: state_keys=%s",
             sorted(runtime_ctx.state.keys()),
         )
@@ -304,7 +303,7 @@ class RegisterFlowRunner:
             result = await self._execute_node_with_retry(node, runtime_ctx, attempts)
             runtime_ctx.update_values(result.data)
             if result.data:
-                logger.info(
+                logger.debug(
                     "节点数据写入上下文: node=%s, data_keys=%s",
                     current_node_name,
                     sorted(result.data.keys()),
@@ -344,7 +343,7 @@ class RegisterFlowRunner:
 
             next_node_name = transition.target_node
             if next_node_name is None:
-                logger.info(
+                logger.debug(
                     "注册流程成功结束: final_node=%s, status=%s",
                     current_node_name,
                     result.status,
@@ -372,15 +371,15 @@ class RegisterFlowRunner:
     async def _initialize_context(self, ctx: RegisterContext) -> None:
         for initializer in self._context_initializers:
             initializer_name = type(initializer).__name__
-            logger.info("初始化注册上下文: initializer=%s", initializer_name)
+            logger.debug("初始化注册上下文: initializer=%s", initializer_name)
             await initializer.initialize(ctx)
-            logger.info("注册上下文初始化器完成: initializer=%s", initializer_name)
+            logger.debug("注册上下文初始化器完成: initializer=%s", initializer_name)
 
     async def _execute_node_with_retry(
-        self,
-        node: RegisterNode,
-        ctx: RegisterContext,
-        attempts: list[NodeAttempt],
+            self,
+            node: RegisterNode,
+            ctx: RegisterContext,
+            attempts: list[NodeAttempt],
     ) -> NodeResult:
         retry_policy = node.retry_policy
 
@@ -441,9 +440,9 @@ class RegisterFlowRunner:
         raise RegisterFlowError(f"节点 {node.name} 没有产生执行结果")
 
     async def _execute_node_once(
-        self,
-        node: RegisterNode,
-        ctx: RegisterContext,
+            self,
+            node: RegisterNode,
+            ctx: RegisterContext,
     ) -> NodeResult:
         try:
             result = await node.execute(ctx)

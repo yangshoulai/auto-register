@@ -45,7 +45,7 @@ class PydollBrowserContextInitializer:
         browser = ctx.get_value(self._browser_state_key)
         browser_created = False
         if browser is None:
-            logger.info("创建 pydoll 浏览器实例")
+            logger.debug("创建 pydoll 浏览器实例")
             browser = self._browser_factory()
             browser_created = True
         else:
@@ -56,7 +56,7 @@ class PydollBrowserContextInitializer:
         tab = ctx.get_value(self._initial_tab_state_key)
         if tab is None:
             try:
-                logger.info("启动 pydoll 浏览器并初始化 TAB")
+                logger.debug("启动 pydoll 浏览器并初始化 TAB")
                 tab = await browser.start()
             except Exception as exc:
                 from register.register_flow import RegisterFlowError
@@ -66,7 +66,7 @@ class PydollBrowserContextInitializer:
                     "pydoll 浏览器启动失败，请检查 Chrome 是否可用，"
                     "或调大 browser_start_timeout"
                 ) from exc
-            logger.info("pydoll 浏览器启动完成，配置 CDP loopback 地址")
+            logger.debug("pydoll 浏览器启动完成，配置 CDP loopback 地址")
             await _configure_browser_loopback_ws_address(browser)
             _configure_tab_loopback_ws_address(browser, tab)
             await _maximize_browser_window(browser)
@@ -75,7 +75,7 @@ class PydollBrowserContextInitializer:
 
         ctx.set_value(self._initial_tab_state_key, tab)
         ctx.set_value(self._current_tab_state_key, tab)
-        logger.info("浏览器上下文就绪")
+        logger.debug("浏览器上下文就绪")
 
 
 def _create_default_browser(browser_start_timeout: int = 30) -> Chrome:
@@ -130,7 +130,7 @@ def _normalize_ws_host(ws_address: str, host: str) -> str:
 async def _configure_browser_loopback_ws_address(browser: Browser) -> None:
     port = browser._connection_port
     browser._ws_address = await _get_browser_ws_address_from_loopback(port)
-    logger.info("浏览器 websocket 地址已修正为 loopback: port=%s", port)
+    logger.debug("浏览器 websocket 地址已修正为 loopback: port=%s", port)
 
 
 def _configure_tab_loopback_ws_address(browser: Browser, tab: Tab) -> None:
@@ -142,7 +142,7 @@ def _configure_tab_loopback_ws_address(browser: Browser, tab: Tab) -> None:
     ws_address = _resolve_tab_ws_address(browser, target_id, port)
     tab._ws_address = ws_address
     tab._connection_handler = ConnectionHandler(ws_address=ws_address)
-    logger.info("TAB websocket 地址已修正: target_id=%s", target_id)
+    logger.debug("TAB websocket 地址已修正: target_id=%s", target_id)
 
 
 def _resolve_tab_ws_address(browser: Browser, target_id: str, port: int) -> str:
@@ -153,4 +153,4 @@ def _resolve_tab_ws_address(browser: Browser, target_id: str, port: int) -> str:
 
 async def _maximize_browser_window(browser: Browser) -> None:
     await browser.set_window_maximized()
-    logger.info("浏览器窗口已最大化")
+    logger.debug("浏览器窗口已最大化")

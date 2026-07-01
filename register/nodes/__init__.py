@@ -1,4 +1,5 @@
 from register.nodes.add_phone_number_node import AddPhoneNumberNode
+from register.nodes.create_password_node import CreatePasswordNode
 from register.nodes.fill_about_you_node import FillAboutYouNode
 from register.nodes.fill_email_and_submit_node import FillEmailAndSubmitNode
 from register.nodes.open_chatgpt_tab_node import OpenChatGptTabNode
@@ -9,6 +10,7 @@ from register.nodes.wait_sms_verification_code_node import WaitSmsVerificationCo
 
 __all__ = [
     "AddPhoneNumberNode",
+    "CreatePasswordNode",
     "FillAboutYouNode",
     "FillEmailAndSubmitNode",
     "OpenChatGptTabNode",

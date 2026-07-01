@@ -157,9 +157,8 @@ class WaitEmailVerificationCodeNode(RegisterNode):
                 break
 
             logger.info(
-                "邮箱验证码已获取，准备填写提交: email=%s, subject=%s",
-                mask_email(email_account.email_address),
-                message.subject,
+                "邮箱验证码已获取: %s",
+                message.verification_code,
             )
             await PydollClipboardInput.fill_text(
                 tab,
@@ -303,8 +302,8 @@ class WaitEmailVerificationCodeNode(RegisterNode):
         )
 
     async def _wait_code_input_or_try_again(
-        self,
-        tab: Tab,
+            self,
+            tab: Tab,
     ) -> PydollWaitResult:
         return await wait_for_any_condition(
             [
@@ -338,7 +337,7 @@ class WaitEmailVerificationCodeNode(RegisterNode):
         poll_count = 0
         while self._now() <= deadline:
             poll_count += 1
-            logger.info(
+            logger.debug(
                 "查询邮箱验证码邮件: email=%s, poll=%d",
                 mask_email(email_account.email_address),
                 poll_count,
@@ -348,7 +347,7 @@ class WaitEmailVerificationCodeNode(RegisterNode):
                 sent_after=sent_after,
             )
             if message is not None and message.verification_code:
-                logger.info(
+                logger.debug(
                     "匹配到邮箱验证码邮件: email=%s, poll=%d",
                     mask_email(email_account.email_address),
                     poll_count,

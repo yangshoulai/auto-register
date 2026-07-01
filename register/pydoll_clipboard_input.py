@@ -63,7 +63,7 @@ class PydollClipboardInput:
         expected_text = text if expected_value is None else expected_value
         last_value = ""
         for attempt in range(1, max_attempts + 1):
-            logger.info(
+            logger.debug(
                 "%s 通过剪贴板输入文本: attempt=%d/%d, text=%s",
                 label,
                 attempt,
@@ -81,7 +81,7 @@ class PydollClipboardInput:
             await asyncio.sleep(read_delay_seconds)
             last_value = await cls.read_value(element)
             if cls._matches(last_value, expected_text, match_mode):
-                logger.info(
+                logger.debug(
                     "%s 剪贴板粘贴成功: current_value=%s",
                     label,
                     last_value,

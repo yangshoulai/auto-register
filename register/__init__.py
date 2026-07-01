@@ -21,6 +21,7 @@ from register.browser_context import (
 from register.local_callback_server import LocalCallbackServer
 from register.nodes import (
     AddPhoneNumberNode,
+    CreatePasswordNode,
     FillAboutYouNode,
     FillEmailAndSubmitNode,
     OpenChatGptTabNode,
@@ -39,6 +40,7 @@ from register.pydoll_wait import (
 )
 
 __all__ = [
+    "CreatePasswordNode",
     "FillAboutYouNode",
     "FillEmailAndSubmitNode",
     "AddPhoneNumberNode",

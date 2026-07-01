@@ -44,10 +44,13 @@ class FillEmailAndSubmitNode(RegisterNode):
     VERIFICATION_CODE_INPUT_SELECTOR = "input[name='code']"
     SMS_VERIFICATION_CODE_INPUT_SELECTOR = "input[name='name']"
     SMS_VERIFICATION_URL_PART = "/phone-verification"
+    CREATE_PASSWORD_URL_PART = "/create-account/password"
+    PASSWORD_INPUT_SELECTOR = "input[name='new-password']"
     EXPECTED_VERIFICATION_URL = "https://auth.openai.com/email-verification"
     VERIFICATION_CODE_INPUT_WAIT_TIMEOUT_SECONDS = 30
     SUCCESS_STATUS = "email_submitted"
     SMS_VERIFICATION_READY_STATUS = "email_submitted_sms_verification_ready"
+    CREATE_PASSWORD_READY_STATUS = "email_submitted_create_password_ready"
     FAILED_STATUS = "email_submit_failed"
     UNEXPECTED_URL_STATUS = "email_verification_unexpected_url"
 
@@ -121,11 +124,15 @@ class FillEmailAndSubmitNode(RegisterNode):
                     "sms_verification_input",
                     lambda: _check_sms_verification_ready(tab, self),
                 ),
+                PydollWaitCondition(
+                    "create_password_input",
+                    lambda: _check_create_password_ready(tab, self),
+                ),
             ],
             timeout_seconds=self.VERIFICATION_CODE_INPUT_WAIT_TIMEOUT_SECONDS,
         )
         current_url = await tab.current_url
-        logger.info(
+        logger.debug(
             "邮箱提交后的页面等待结果: matched=%s, condition=%s, current_url=%s",
             wait_result.matched,
             wait_result.condition_name,
@@ -153,6 +160,18 @@ class FillEmailAndSubmitNode(RegisterNode):
                     self.EMAIL_SUBMITTED_AT_STATE_KEY: email_submitted_at,
                     self.EMAIL_VERIFICATION_URL_STATE_KEY: current_url,
                     "phone_submitted_at": email_submitted_at,
+                },
+            )
+
+        if wait_result.condition_name == "create_password_input":
+            logger.info("邮箱提交后进入创建密码页面")
+            return NodeResult.ok(
+                status=self.CREATE_PASSWORD_READY_STATUS,
+                data={
+                    self.ACCOUNT_STATE_KEY: account,
+                    self.EMAIL_ACCOUNT_STATE_KEY: email_account,
+                    self.EMAIL_SUBMITTED_AT_STATE_KEY: email_submitted_at,
+                    self.EMAIL_VERIFICATION_URL_STATE_KEY: current_url,
                 },
             )
 
@@ -194,14 +213,14 @@ class FillEmailAndSubmitNode(RegisterNode):
         )
 
     async def _query_submit_button(self, tab: Tab) -> WebElement:
-        logger.info("查找注册弹窗提交按钮: selector=%s", self.SUBMIT_BUTTON_SELECTOR)
+        logger.debug("查找注册弹窗提交按钮: selector=%s", self.SUBMIT_BUTTON_SELECTOR)
         submit_button: WebElement | None = await tab.query(
             self.SUBMIT_BUTTON_SELECTOR,
             timeout=5,
             raise_exc=False,
         )
         if submit_button is not None:
-            logger.info("找到注册弹窗提交按钮")
+            logger.debug("找到注册弹窗提交按钮")
             return submit_button
 
         logger.info("查找页面提交按钮: selector=%s", self.PAGE_SUBMIT_BUTTON_SELECTOR)
@@ -238,6 +257,17 @@ async def _check_sms_verification_ready(
         return None
 
     return await tab.query(node.SMS_VERIFICATION_CODE_INPUT_SELECTOR, raise_exc=False)
+
+
+async def _check_create_password_ready(
+        tab: Tab,
+        node: FillEmailAndSubmitNode,
+) -> WebElement | None:
+    current_url = await tab.current_url
+    if node.CREATE_PASSWORD_URL_PART not in current_url:
+        return None
+
+    return await tab.query(node.PASSWORD_INPUT_SELECTOR, raise_exc=False)
 
 
 def _is_expected_url(current_url: str, expected_url: str) -> bool:

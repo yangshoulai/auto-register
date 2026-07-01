@@ -129,7 +129,7 @@ class AddPhoneNumberNode(RegisterNode):
             timeout=10,
             raise_exc=True,
         )
-        logger.info("填写手机号: mobile=%s", mask_phone(normalized_mobile_number))
+        logger.debug("填写手机号: mobile=%s", mask_phone(normalized_mobile_number))
         await _fill_mobile_number(tab, phone_input, normalized_mobile_number)
 
         await self._select_sms_verification_method(tab)
@@ -189,7 +189,7 @@ class AddPhoneNumberNode(RegisterNode):
                 data=result_data,
             )
 
-        logger.info("手机号验证码页面已就绪")
+        logger.debug("手机号验证码页面已就绪")
         return NodeResult.ok(status=self.SUCCESS_STATUS, data=result_data)
 
     async def _select_sms_verification_method(self, tab: Tab) -> None:

@@ -50,7 +50,7 @@ class SmsBowerService(SmsService):
         self._poll_interval_seconds = poll_interval_seconds
         self._sleeper = sleeper
         self._monotonic_clock = monotonic_clock
-        logger.info(
+        logger.debug(
             "SMSBower 服务已初始化: country_id=%s, min_price=%s, max_price=%s, code_timeout=%s",
             config.country_id,
             config.min_price,
@@ -59,7 +59,7 @@ class SmsBowerService(SmsService):
         )
 
     def get_mobile_number(self) -> SmsMobileNumber:
-        logger.info("SMSBower 申请手机号")
+        logger.debug("SMSBower 申请手机号")
         payload = self._request_json(
             {
                 "api_key": self._config.api_key,
@@ -105,7 +105,7 @@ class SmsBowerService(SmsService):
 
         while True:
             poll_count += 1
-            logger.info(
+            logger.debug(
                 "SMSBower 查询验证码: mobile=%s, activation_id=%s, poll=%d",
                 mask_phone(mobile_number.mobile_number),
                 activation_id,
@@ -113,7 +113,7 @@ class SmsBowerService(SmsService):
             )
             code = self._query_latest_verification_code(activation_id)
             if code:
-                logger.info(
+                logger.debug(
                     "SMSBower 已获取验证码: mobile=%s, poll=%d",
                     mask_phone(mobile_number.mobile_number),
                     poll_count,
@@ -147,7 +147,7 @@ class SmsBowerService(SmsService):
             is_verification_code_received: bool,
     ) -> None:
         if is_verification_code_received:
-            logger.info(
+            logger.debug(
                 "SMSBower 回调: 已收到验证码，不取消激活: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )

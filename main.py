@@ -15,6 +15,7 @@ from core.logging_config import configure_logging
 from email.email_service import EmailAccount
 from register import (
     AddPhoneNumberNode,
+    CreatePasswordNode,
     FillAboutYouNode,
     FillEmailAndSubmitNode,
     OpenChatGptTabNode,
@@ -52,10 +53,11 @@ def build_register_flow() -> RegisterFlow:
     """
     组装注册流程。
 
-    当前流程：打开注册弹窗，提交邮箱，验证邮箱，填写资料，完成 Codex OAuth 导出。
+    当前流程：打开注册弹窗，提交邮箱，必要时创建密码，验证邮箱，填写资料，完成 Codex OAuth 导出。
     """
     open_chatgpt_tab_node = OpenChatGptTabNode()
     fill_email_and_submit_node = FillEmailAndSubmitNode()
+    create_password_node = CreatePasswordNode()
     wait_email_verification_code_node = WaitEmailVerificationCodeNode()
     fill_about_you_node = FillAboutYouNode()
     select_codex_account_node = SelectCodexAccountNode()
@@ -67,6 +69,7 @@ def build_register_flow() -> RegisterFlow:
         nodes={
             open_chatgpt_tab_node.name: open_chatgpt_tab_node,
             fill_email_and_submit_node.name: fill_email_and_submit_node,
+            create_password_node.name: create_password_node,
             wait_email_verification_code_node.name: wait_email_verification_code_node,
             fill_about_you_node.name: fill_about_you_node,
             select_codex_account_node.name: select_codex_account_node,
@@ -89,6 +92,16 @@ def build_register_flow() -> RegisterFlow:
                 Transition.when_status(
                     FillEmailAndSubmitNode.SMS_VERIFICATION_READY_STATUS,
                     wait_sms_verification_code_node.name,
+                ),
+                Transition.when_status(
+                    FillEmailAndSubmitNode.CREATE_PASSWORD_READY_STATUS,
+                    create_password_node.name,
+                )
+            ],
+            create_password_node.name: [
+                Transition.when_status(
+                    CreatePasswordNode.SUCCESS_STATUS,
+                    wait_email_verification_code_node.name,
                 )
             ],
             wait_email_verification_code_node.name: [
@@ -156,7 +169,7 @@ def build_register_flow() -> RegisterFlow:
 async def run_register_flow(app_context: AppContext) -> RegisterFlowResult:
     register_context = RegisterContext(app_context=app_context)
     callback_server = LocalCallbackServer()
-    logger.info("启动本地 OAuth 回调服务: %s", callback_server.url)
+    logger.debug("启动本地 OAuth 回调服务: %s", callback_server.url)
     callback_server.start()
     runner = RegisterFlowRunner(
         context_initializers=[
@@ -169,7 +182,7 @@ async def run_register_flow(app_context: AppContext) -> RegisterFlowResult:
         try:
             await close_register_runtime(register_context)
         finally:
-            logger.info("关闭本地 OAuth 回调服务: %s", callback_server.url)
+            logger.debug("关闭本地 OAuth 回调服务: %s", callback_server.url)
             callback_server.stop()
 
 
@@ -185,7 +198,7 @@ async def close_register_runtime(register_context: RegisterContext) -> None:
         return
 
     with suppress(Exception):
-        logger.info("关闭 pydoll 浏览器")
+        logger.debug("关闭 pydoll 浏览器")
         await browser.stop()
         return
 
@@ -208,7 +221,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     logger.info("加载配置文件: %s", Path(args.config).resolve())
 
     with create_app_context(config) as ctx:
-        logger.info("应用上下文初始化完成")
+        logger.debug("应用上下文初始化完成")
         try:
             result = asyncio.run(run_register_flow(ctx))
         except RegisterFlowError as exc:
@@ -216,7 +229,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             return
 
         if result.success:
-            logger.info("注册流程执行完成，最后节点: %s", result.final_node)
+            logger.info("注册流程执行完成", )
             log_registered_account_summary(result)
             return
 
@@ -265,7 +278,7 @@ def log_registered_account_summary(result: RegisterFlowResult) -> None:
     username = " ".join(part for part in (first_name, last_name) if part)
 
     logger.info(
-        "\n"
+        "注册结果\n"
         "==================== 注册账号信息 ====================\n"
         "邮箱地址      : %s\n"
         "手机号        : %s\n"
@@ -298,9 +311,9 @@ def _collect_success_flow_data(result: RegisterFlowResult) -> dict[str, Any]:
 
 
 def _read_typed_value(
-    values: dict[str, Any],
-    key: str,
-    expected_type: type[Any],
+        values: dict[str, Any],
+        key: str,
+        expected_type: type[Any],
 ) -> Any | None:
     value = values.get(key)
     if isinstance(value, expected_type):

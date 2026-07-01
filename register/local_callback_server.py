@@ -57,7 +57,7 @@ class LocalCallbackServer:
             daemon=True,
         )
         self._thread.start()
-        logger.info("本地 OAuth 回调服务已启动: url=%s", self.url)
+        logger.debug("本地 OAuth 回调服务已启动: url=%s", self.url)
 
     def stop(self) -> None:
         server = self._server
@@ -72,7 +72,7 @@ class LocalCallbackServer:
         server.server_close()
         if thread is not None:
             thread.join(timeout=2)
-        logger.info("本地 OAuth 回调服务已关闭: url=%s", self.url)
+        logger.debug("本地 OAuth 回调服务已关闭: url=%s", self.url)
 
 
 class _ReusableThreadingHTTPServer(ThreadingHTTPServer):
@@ -95,7 +95,7 @@ class _OkCallbackHandler(BaseHTTPRequestHandler):
         return
 
     def _write_ok_response(self) -> None:
-        logger.info("收到本地 OAuth 回调请求: method=%s, path=%s", self.command, self.path)
+        logger.debug("收到本地 OAuth 回调请求: method=%s, path=%s", self.command, self.path)
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(self.RESPONSE_BODY)))

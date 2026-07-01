@@ -71,12 +71,12 @@ class SelectCodexAccountNode(RegisterNode):
         if account.email_address is None:
             raise RuntimeError("账号缺少邮箱地址，无法选择 OAuth 账号")
 
-        logger.info("获取 Codex OAuth 授权链接")
+        logger.debug("获取 Codex OAuth 授权链接")
         oauth_url = ctx.app_context.account_export_service.get_oauth_url()
-        logger.info("访问 Codex OAuth 授权链接: url=%s", sanitize_url(oauth_url.url))
+        logger.debug("访问 Codex OAuth 授权链接: url=%s", sanitize_url(oauth_url.url))
         await tab.go_to(oauth_url.url)
 
-        logger.info(
+        logger.debug(
             "等待账号选择按钮: email=%s",
             mask_email(account.email_address),
         )
@@ -94,7 +94,7 @@ class SelectCodexAccountNode(RegisterNode):
             timeout_seconds=self.CHOOSE_ACCOUNT_WAIT_TIMEOUT_SECONDS,
         )
         current_url = await tab.current_url
-        logger.info(
+        logger.debug(
             "账号选择页等待结果: matched=%s, current_url=%s",
             button_result.matched,
             current_url,
@@ -133,7 +133,7 @@ class SelectCodexAccountNode(RegisterNode):
             timeout_seconds=self.NEXT_PAGE_WAIT_TIMEOUT_SECONDS,
         )
         next_url = await tab.current_url
-        logger.info(
+        logger.debug(
             "OAuth 账号选择后的页面结果: matched=%s, condition=%s, next_url=%s",
             next_page_result.matched,
             next_page_result.condition_name,
@@ -151,7 +151,7 @@ class SelectCodexAccountNode(RegisterNode):
                 data=result_data,
             )
 
-        logger.info("OAuth 下一步页面已就绪: status=%s", next_page_result.condition_name)
+        logger.debug("OAuth 下一步页面已就绪: status=%s", next_page_result.condition_name)
         return NodeResult.ok(
             status=next_page_result.condition_name or "",
             data=result_data,

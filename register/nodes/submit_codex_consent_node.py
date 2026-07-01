@@ -58,7 +58,7 @@ class SubmitCodexConsentNode(RegisterNode):
 
         tab: Tab = ctx.get_value(self.CURRENT_TAB_STATE_KEY)
         email_account: EmailAccount = ctx.get_value(self.EMAIL_ACCOUNT_STATE_KEY)
-        logger.info("准备提交 Codex consent: email=%s", mask_email(email_account.email_address))
+        logger.debug("准备提交 Codex consent: email=%s", mask_email(email_account.email_address))
         submit_button = await self._query_submit_button(tab)
         logger.info("点击 Codex consent 提交按钮")
         await submit_button.click(humanize=True)
@@ -107,7 +107,7 @@ class SubmitCodexConsentNode(RegisterNode):
                 data=result_data,
             )
 
-        logger.info("账号导出成功，执行邮箱服务回调")
+        logger.debug("账号导出成功，执行邮箱服务回调")
         ctx.app_context.email_service.callback(email_account, is_email_used=True)
         return NodeResult.ok(status=self.SUCCESS_STATUS, data=result_data)
 

@@ -51,11 +51,11 @@ class WaitSmsVerificationCodeNode(RegisterNode):
     UNEXPECTED_URL_STATUS = "codex_consent_unexpected_url"
 
     def __init__(
-        self,
-        name: str = DEFAULT_NAME,
-        *,
-        retry_policy: RetryPolicy | None = None,
-        now: Callable[[], datetime] | None = None,
+            self,
+            name: str = DEFAULT_NAME,
+            *,
+            retry_policy: RetryPolicy | None = None,
+            now: Callable[[], datetime] | None = None,
     ) -> None:
         super().__init__(name, retry_policy=retry_policy)
         self._now = now or (lambda: datetime.now(UTC))
@@ -104,7 +104,7 @@ class WaitSmsVerificationCodeNode(RegisterNode):
                 )
                 return self._build_sms_timeout_result(ctx, await tab.current_url)
 
-            logger.info("短信验证码已获取，准备提交")
+            logger.info("短信验证码已获取: %s", code)
             result = await self._submit_code_and_wait_result(tab, code)
             current_url = await tab.current_url
             if result.condition_name == self.CODE_FILL_MISMATCH_STATUS:
@@ -118,13 +118,13 @@ class WaitSmsVerificationCodeNode(RegisterNode):
                     data=_create_result_data(code=code, current_url=current_url),
                 )
 
-            logger.info(
+            logger.debug(
                 "短信验证码提交后的页面等待结果: condition=%s, current_url=%s",
                 result.condition_name,
                 current_url,
             )
             if result.condition_name == "consent_ready":
-                logger.info("短信验证完成，进入 Codex consent 页面")
+                logger.debug("短信验证完成，进入 Codex consent 页面")
                 ctx.app_context.sms_service.callback(
                     mobile_number,
                     is_verification_code_received=True,
@@ -164,9 +164,9 @@ class WaitSmsVerificationCodeNode(RegisterNode):
             )
 
     def _build_sms_timeout_result(
-        self,
-        ctx: RegisterContext,
-        current_url: str,
+            self,
+            ctx: RegisterContext,
+            current_url: str,
     ) -> NodeResult:
         if ctx.app_context is None:
             raise RuntimeError("注册上下文缺少 AppContext，无法判断短信重试次数")
@@ -204,9 +204,9 @@ class WaitSmsVerificationCodeNode(RegisterNode):
         )
 
     async def _submit_code_and_wait_result(
-        self,
-        tab: Tab,
-        code: str,
+            self,
+            tab: Tab,
+            code: str,
     ) -> PydollWaitResult:
         code_input: WebElement = await tab.query(
             self.CODE_INPUT_SELECTOR,

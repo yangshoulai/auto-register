@@ -84,7 +84,7 @@ class OpenChatGptTabNode(RegisterNode):
             initial_tab = await browser.start()
             browser_created = True
         else:
-            logger.info("使用上下文中的浏览器打开 ChatGPT")
+            logger.debug("使用上下文中的浏览器打开 ChatGPT")
             initial_tab: Tab | None = ctx.get_value(self._initial_tab_state_key)
             if initial_tab is None:
                 initial_tab = ctx.get_value(self._current_tab_state_key)
@@ -93,10 +93,9 @@ class OpenChatGptTabNode(RegisterNode):
                 initial_tab = await browser.start()
 
         tab = initial_tab
-        logger.info("访问 ChatGPT: target_url=%s", self._target_url)
+        logger.info("访问 ChatGPT: %s", self._target_url)
         await _navigate_tab(tab, self._target_url)
         current_url = await _read_tab_current_url(tab)
-        logger.info("ChatGPT 页面已打开: current_url=%s", current_url)
         if not _is_expected_url(current_url, self._expected_netloc):
             return NodeResult.fail(
                 status=self.UNEXPECTED_URL_STATUS,
@@ -118,7 +117,7 @@ class OpenChatGptTabNode(RegisterNode):
             login_email_input_selector=self.LOGIN_EMAIL_INPUT_SELECTOR,
             signup_button_selector=self.SIGNUP_BUTTON_SELECTOR,
         )
-        logger.info(
+        logger.debug(
             "邮箱输入入口已就绪: signup_button_clicked=%s",
             signup_button_clicked,
         )
@@ -150,13 +149,13 @@ async def _ensure_signup_dialog_email_input(
         login_email_input_selector: str,
         signup_button_selector: str,
 ) -> tuple[WebElement, bool]:
-    logger.info("查找注册弹窗邮箱输入框: selector=%s", email_input_selector)
+    logger.debug("查找注册弹窗邮箱输入框: selector=%s", email_input_selector)
     email_input = await tab.query(email_input_selector, timeout=2, raise_exc=False)
     if email_input is not None:
-        logger.info("找到注册弹窗邮箱输入框")
+        logger.debug("找到注册弹窗邮箱输入框")
         return email_input, False
 
-    logger.info("注册弹窗未出现，检查登录页邮箱输入框: selector=%s", login_email_input_selector)
+    logger.debug("注册弹窗未出现，检查登录页邮箱输入框: selector=%s", login_email_input_selector)
     login_email_input = await tab.query(
         login_email_input_selector,
         timeout=5,
@@ -166,12 +165,12 @@ async def _ensure_signup_dialog_email_input(
         logger.info("找到登录页邮箱输入框")
         return login_email_input, False
 
-    logger.info("点击注册按钮打开邮箱弹窗: selector=%s", signup_button_selector)
+    logger.info("点击注册按钮")
     signup_button = await tab.query(signup_button_selector, timeout=10, raise_exc=True)
     await signup_button.click(humanize=True)
 
     email_input = await tab.query(email_input_selector, timeout=10, raise_exc=True)
-    logger.info("注册弹窗邮箱输入框已出现")
+    logger.debug("注册弹窗邮箱输入框已出现")
     return email_input, True
 
 

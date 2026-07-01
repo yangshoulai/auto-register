@@ -49,7 +49,7 @@ class HeroSmsService(SmsService):
         self._poll_interval_seconds = poll_interval_seconds
         self._sleeper = sleeper
         self._monotonic_clock = monotonic_clock
-        logger.info(
+        logger.debug(
             "HeroSMS 服务已初始化: country_id=%s, max_price=%s, code_timeout=%s",
             config.country_id,
             config.max_price,
@@ -57,7 +57,7 @@ class HeroSmsService(SmsService):
         )
 
     def get_mobile_number(self) -> SmsMobileNumber:
-        logger.info("HeroSMS 申请手机号")
+        logger.debug("HeroSMS 申请手机号")
         payload = self._request_json(
             {
                 "action": "getNumberV2",
@@ -69,7 +69,7 @@ class HeroSmsService(SmsService):
         )
         activation_id = _read_response_string(payload, "activationId")
         mobile_number = _read_response_string(payload, "phoneNumber")
-        logger.info(
+        logger.debug(
             "HeroSMS 手机号申请成功: mobile=%s, activation_id=%s, cost=%s",
             mask_phone(mobile_number),
             activation_id,
@@ -104,7 +104,7 @@ class HeroSmsService(SmsService):
 
         while True:
             poll_count += 1
-            logger.info(
+            logger.debug(
                 "HeroSMS 查询验证码: mobile=%s, activation_id=%s, poll=%d",
                 mask_phone(mobile_number.mobile_number),
                 activation_id,
@@ -150,7 +150,7 @@ class HeroSmsService(SmsService):
             is_verification_code_received: bool,
     ) -> None:
         if is_verification_code_received:
-            logger.info(
+            logger.debug(
                 "HeroSMS 回调: 已收到验证码，不取消激活: mobile=%s",
                 mask_phone(mobile_number.mobile_number),
             )

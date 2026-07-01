@@ -52,7 +52,7 @@ class CpaAccountExportService(AccountExportService):
                 f"CPA 获取 OAuth 链接失败: {payload.get('error') or payload}"
             )
 
-        logger.info("CPA OAuth 链接获取成功: state=%s", payload.get("state") or "")
+        logger.info("CPA OAuth 链接获取成功: %s", _read_response_string(payload, "url") or "")
         return AccountExportOauthUrl(
             url=_read_response_string(payload, "url"),
             state=_read_optional_string(payload, "state"),
@@ -63,7 +63,7 @@ class CpaAccountExportService(AccountExportService):
         )
 
     def submit_redirect_url(self, redirect_url: str) -> AccountExportSubmitResult:
-        logger.info("CPA 提交 OAuth 回调地址: redirect_url=%s", sanitize_url(redirect_url))
+        logger.debug("CPA 提交 OAuth 回调地址: redirect_url=%s", sanitize_url(redirect_url))
         payload = self._request_json(
             "POST",
             "/oauth-callback",
@@ -74,7 +74,7 @@ class CpaAccountExportService(AccountExportService):
         )
         status = str(payload.get("status", ""))
         error = payload.get("error")
-        logger.info(
+        logger.debug(
             "CPA OAuth 回调提交完成: status=%s, error=%s",
             status,
             error or "",

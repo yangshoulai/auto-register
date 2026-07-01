@@ -9,7 +9,6 @@ from curl_cffi import requests
 
 from core.logging_config import format_duration, sanitize_mapping, sanitize_url
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -22,12 +21,12 @@ class HttpService:
     """
 
     def __init__(
-        self,
-        *,
-        default_timeout: float = 30,
-        default_headers: dict[str, str] | None = None,
-        proxy_url: str | None = None,
-        session_factory: Callable[[], Any] | None = None,
+            self,
+            *,
+            default_timeout: float = 30,
+            default_headers: dict[str, str] | None = None,
+            proxy_url: str | None = None,
+            session_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._default_timeout = default_timeout
         self._default_headers = default_headers or {}
@@ -46,7 +45,7 @@ class HttpService:
             kwargs["proxy"] = self._proxy_url
 
         sanitized_url = sanitize_url(url)
-        logger.info(
+        logger.debug(
             "HTTP 请求: method=%s, url=%s, timeout=%s, params=%s, json=%s, header_keys=%s",
             method.upper(),
             sanitized_url,
@@ -67,7 +66,7 @@ class HttpService:
             )
             raise
 
-        logger.info(
+        logger.debug(
             "HTTP 响应: method=%s, url=%s, status=%s, elapsed=%s",
             method.upper(),
             sanitized_url,

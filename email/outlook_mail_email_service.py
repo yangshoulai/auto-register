@@ -18,7 +18,6 @@ from email.email_service import (
     EmailServiceError,
 )
 
-
 VERIFICATION_CODE_PATTERN = re.compile(r"(?<!\d)\d{6}(?!\d)")
 HTML_SCRIPT_STYLE_PATTERN = re.compile(
     r"<(script|style)\b[^>]*>.*?</\1>",
@@ -67,38 +66,33 @@ class OutlookMailEmailService(EmailService):
     OUTLOOK_EMAIL_MODE = "outlook"
 
     def __init__(
-        self,
-        config: OutlookMailEmailServiceConfig,
-        http_service: HttpService | None = None,
+            self,
+            config: OutlookMailEmailServiceConfig,
+            http_service: HttpService | None = None,
     ) -> None:
         self._config = config
         self._http_service = http_service or HttpService()
         self._csrf_token = ""
         self._csrf_disabled = False
-        logger.info(
-            "初始化 OutlookMail 邮箱服务: base_url=%s, mode=%s",
-            config.base_url,
-            self.TEMP_EMAIL_MODE if config.use_temp_email else self.OUTLOOK_EMAIL_MODE,
-        )
         self._initialize_session()
-        logger.info("OutlookMail 邮箱服务初始化完成: csrf_disabled=%s", self._csrf_disabled)
+        logger.debug("OutlookMail 邮箱服务初始化完成: csrf_disabled=%s", self._csrf_disabled)
 
     def generate_email_address(self) -> EmailAccount:
         if self._config.use_temp_email:
             logger.info("通过 OutlookMail 临时邮箱接口生成邮箱")
             return self._generate_temp_email_address()
 
-        logger.info("通过 OutlookMail Outlook 邮箱池分配邮箱")
+        logger.debug("通过 OutlookMail Outlook 邮箱池分配邮箱")
         return self._allocate_outlook_email_account()
 
     def search_first_email(
-        self,
-        email_account: EmailAccount,
-        sent_after: datetime,
+            self,
+            email_account: EmailAccount,
+            sent_after: datetime,
     ) -> EmailMessage | None:
         mode = self._read_account_mode(email_account)
         normalized_sent_after = _normalize_datetime(sent_after)
-        logger.info(
+        logger.debug(
             "查询邮箱验证码邮件: email=%s, mode=%s, sent_after=%s",
             mask_email(email_account.email_address),
             mode,
@@ -119,12 +113,12 @@ class OutlookMailEmailService(EmailService):
             if matched_summary is None:
                 logger.info("临时邮箱未匹配到 OpenAI/ChatGPT 验证邮件")
                 return None
-            logger.info("临时邮箱匹配到验证邮件摘要，开始获取详情")
+            logger.debug("临时邮箱匹配到验证邮件摘要，开始获取详情")
             return self._get_temp_email_message(email_account, matched_summary)
 
         if mode == self.OUTLOOK_EMAIL_MODE:
             summaries = self._list_outlook_email_messages(email_account)
-            logger.info(
+            logger.debug(
                 "Outlook 邮件列表获取完成: email=%s, count=%d",
                 mask_email(email_account.email_address),
                 len(summaries),
@@ -134,7 +128,7 @@ class OutlookMailEmailService(EmailService):
                 normalized_sent_after,
             )
             if matched_summary is None:
-                logger.info("Outlook 邮箱未匹配到 OpenAI/ChatGPT 验证邮件")
+                logger.debug("Outlook 邮箱未匹配到 OpenAI/ChatGPT 验证邮件")
                 return None
             logger.info("Outlook 邮箱匹配到验证邮件摘要，开始获取详情")
             return self._get_outlook_email_message(email_account, matched_summary)
@@ -143,7 +137,7 @@ class OutlookMailEmailService(EmailService):
 
     def callback(self, email_account: EmailAccount, is_email_used: bool) -> None:
         mode = self._read_account_mode(email_account)
-        logger.info(
+        logger.debug(
             "邮箱服务回调: email=%s, mode=%s, is_email_used=%s",
             mask_email(email_account.email_address),
             mode,
@@ -170,7 +164,7 @@ class OutlookMailEmailService(EmailService):
             include_csrf=False,
         )
         launch_url = _read_response_string(login_payload, "launch_url")
-        logger.info("OutlookMail 登录成功，访问 extension launch_url")
+        logger.debug("OutlookMail 登录成功，访问 extension launch_url")
         self._request_raw("GET", launch_url, include_csrf=False)
 
         csrf_payload = self._request_json(
@@ -226,7 +220,7 @@ class OutlookMailEmailService(EmailService):
         account_id = _read_response_id(account, "id")
         account = self._get_outlook_account_detail(account_id)
         email_address = _read_response_string(account, "email")
-        logger.info(
+        logger.debug(
             "Outlook 邮箱分配成功: email=%s, account_id=%s",
             mask_email(email_address),
             account_id,
@@ -254,8 +248,8 @@ class OutlookMailEmailService(EmailService):
         return account
 
     def _list_temp_email_messages(
-        self,
-        email_account: EmailAccount,
+            self,
+            email_account: EmailAccount,
     ) -> list[dict[str, Any]]:
         email_path = quote(email_account.email_address, safe="")
         payload = self._request_json(
@@ -265,9 +259,9 @@ class OutlookMailEmailService(EmailService):
         return _read_response_list(payload, "emails")
 
     def _get_temp_email_message(
-        self,
-        email_account: EmailAccount,
-        summary: dict[str, Any],
+            self,
+            email_account: EmailAccount,
+            summary: dict[str, Any],
     ) -> EmailMessage:
         message_id = _read_response_string(summary, "id")
         email_path = quote(email_account.email_address, safe="")
@@ -285,8 +279,8 @@ class OutlookMailEmailService(EmailService):
         )
 
     def _list_outlook_email_messages(
-        self,
-        email_account: EmailAccount,
+            self,
+            email_account: EmailAccount,
     ) -> list[dict[str, Any]]:
         email_path = quote(email_account.email_address, safe="")
         payload = self._request_json(
@@ -297,9 +291,9 @@ class OutlookMailEmailService(EmailService):
         return _read_response_list(payload, "emails")
 
     def _get_outlook_email_message(
-        self,
-        email_account: EmailAccount,
-        summary: dict[str, Any],
+            self,
+            email_account: EmailAccount,
+            summary: dict[str, Any],
     ) -> EmailMessage:
         message_id = _read_response_string(summary, "id")
         email_path = quote(email_account.email_address, safe="")
@@ -317,8 +311,8 @@ class OutlookMailEmailService(EmailService):
         )
 
     def _move_outlook_account_to_registered_group(
-        self,
-        email_account: EmailAccount,
+            self,
+            email_account: EmailAccount,
     ) -> None:
         account_id = _require_account_attribute(email_account, "account_id")
         client_id = _require_account_attribute(email_account, "client_id")
@@ -338,7 +332,7 @@ class OutlookMailEmailService(EmailService):
                 "group_id": registered_group_id,
             },
         )
-        logger.info(
+        logger.debug(
             "Outlook 邮箱已移动到已注册分组: email=%s, account_id=%s, group_id=%s",
             mask_email(email_account.email_address),
             account_id,
@@ -346,9 +340,9 @@ class OutlookMailEmailService(EmailService):
         )
 
     def _find_first_summary(
-        self,
-        summaries: list[dict[str, Any]],
-        sent_after: datetime,
+            self,
+            summaries: list[dict[str, Any]],
+            sent_after: datetime,
     ) -> dict[str, Any] | None:
         matched_summaries = [
             summary
@@ -365,12 +359,12 @@ class OutlookMailEmailService(EmailService):
         )
 
     def _request_json(
-        self,
-        method: str,
-        path: str,
-        *,
-        include_csrf: bool = True,
-        **kwargs: Any,
+            self,
+            method: str,
+            path: str,
+            *,
+            include_csrf: bool = True,
+            **kwargs: Any,
     ) -> dict[str, Any]:
         response = self._request_raw(method, path, include_csrf=include_csrf, **kwargs)
         try:
@@ -385,12 +379,12 @@ class OutlookMailEmailService(EmailService):
         return payload
 
     def _request_raw(
-        self,
-        method: str,
-        path: str,
-        *,
-        include_csrf: bool = True,
-        **kwargs: Any,
+            self,
+            method: str,
+            path: str,
+            *,
+            include_csrf: bool = True,
+            **kwargs: Any,
     ) -> Any:
         headers = dict(kwargs.pop("headers", {}))
         if include_csrf and self._csrf_token and not self._csrf_disabled:
@@ -433,7 +427,7 @@ class OutlookMailEmailService(EmailService):
 
 
 def create_outlook_mail_email_service_config(
-    provider_config: dict[str, Any],
+        provider_config: dict[str, Any],
 ) -> OutlookMailEmailServiceConfig:
     temp_email_config = _read_optional_temp_email_config(provider_config)
     outlook_config = _read_optional_outlook_config(provider_config)
@@ -460,7 +454,7 @@ def create_outlook_mail_email_service_config(
 
 
 def _read_optional_temp_email_config(
-    provider_config: dict[str, Any],
+        provider_config: dict[str, Any],
 ) -> OutlookMailTempEmailConfig | None:
     temp_email_config = _read_optional_table(provider_config, "temp_email")
     if temp_email_config is None:
@@ -478,7 +472,7 @@ def _read_optional_temp_email_config(
 
 
 def _read_optional_outlook_config(
-    provider_config: dict[str, Any],
+        provider_config: dict[str, Any],
 ) -> OutlookMailOutlookConfig | None:
     outlook_config = _read_optional_table(provider_config, "outlook")
     if outlook_config is None:
@@ -491,11 +485,11 @@ def _read_optional_outlook_config(
 
 
 def _create_email_message(
-    *,
-    email_account: EmailAccount,
-    email_payload: dict[str, Any],
-    fallback_summary: dict[str, Any],
-    mode: str,
+        *,
+        email_account: EmailAccount,
+        email_payload: dict[str, Any],
+        fallback_summary: dict[str, Any],
+        mode: str,
 ) -> EmailMessage:
     merged_payload = {**fallback_summary, **email_payload}
     message_id = _read_response_string(merged_payload, "id")
@@ -517,14 +511,14 @@ def _create_email_message(
 
 
 def _matches_email_summary(
-    summary: dict[str, Any],
-    sent_after: datetime,
+        summary: dict[str, Any],
+        sent_after: datetime,
 ) -> bool:
     sent_at = _parse_email_datetime(summary)
     return (
-        sent_at >= sent_after
-        and OPENAI_SENDER_KEYWORD in str(summary.get("from", "")).lower()
-        and _subject_matches_openai(str(summary.get("subject", "")))
+            sent_at >= sent_after
+            and OPENAI_SENDER_KEYWORD in str(summary.get("from", "")).lower()
+            and _subject_matches_openai(str(summary.get("subject", "")))
     )
 
 
