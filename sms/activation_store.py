@@ -5,11 +5,13 @@ import logging
 import sqlite3
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 @dataclass(frozen=True)
@@ -57,29 +59,27 @@ class SmsActivationStore:
         return self._sqlite_path
 
     def upsert_activation(self, record: SmsActivationRecord) -> None:
-        now_text = _serialize_datetime(_utc_now())
+        now_text = _serialize_datetime(_beijing_now())
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO sms_activations (
-                    provider,
-                    service_code,
-                    mobile_number,
-                    activation_id,
-                    activation_cost,
-                    currency,
-                    country_code,
-                    country_phone_code,
-                    activation_operator,
-                    activation_time,
-                    activation_end_time,
-                    can_get_another_sms,
-                    raw_json,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(provider, activation_id) DO UPDATE SET
+                INSERT INTO sms_activations (provider,
+                                             service_code,
+                                             mobile_number,
+                                             activation_id,
+                                             activation_cost,
+                                             currency,
+                                             country_code,
+                                             country_phone_code,
+                                             activation_operator,
+                                             activation_time,
+                                             activation_end_time,
+                                             can_get_another_sms,
+                                             raw_json,
+                                             created_at,
+                                             updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, activation_id) DO
+                UPDATE SET
                     service_code = excluded.service_code,
                     mobile_number = excluded.mobile_number,
                     activation_cost = excluded.activation_cost,
@@ -189,7 +189,6 @@ class SmsActivationStore:
                 SELECT *
                 FROM sms_activations
                 WHERE provider = ?
-                  AND is_available = 1
                   AND verification_code_received_count = 0
                   AND activation_time <= ?
                 ORDER BY activation_time ASC
@@ -216,7 +215,7 @@ class SmsActivationStore:
             activation_id: str,
             entry: VerificationCodeEntry,
     ) -> None:
-        received_at = _normalize_datetime(entry.received_at or _utc_now())
+        received_at = _normalize_datetime(entry.received_at or _beijing_now())
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -258,7 +257,7 @@ class SmsActivationStore:
                 (
                     _serialize_datetime(received_at),
                     _json_dumps(verification_codes),
-                    _serialize_datetime(_utc_now()),
+                    _serialize_datetime(_beijing_now()),
                     provider,
                     activation_id,
                 ),
@@ -290,8 +289,8 @@ class SmsActivationStore:
                 """,
                 (
                     error,
-                    _serialize_datetime(failed_at or _utc_now()),
-                    _serialize_datetime(_utc_now()),
+                    _serialize_datetime(failed_at or _beijing_now()),
+                    _serialize_datetime(_beijing_now()),
                     provider,
                     activation_id,
                 ),
@@ -308,37 +307,103 @@ class SmsActivationStore:
         with self._connect() as connection:
             connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS sms_activations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    provider TEXT NOT NULL,
-                    service_code TEXT NOT NULL,
-                    mobile_number TEXT NOT NULL,
-                    activation_id TEXT NOT NULL,
-                    activation_cost TEXT,
-                    currency TEXT,
-                    country_code TEXT,
-                    country_phone_code TEXT,
-                    activation_operator TEXT,
-                    activation_time TEXT NOT NULL,
-                    activation_end_time TEXT NOT NULL,
-                    can_get_another_sms INTEGER NOT NULL DEFAULT 0,
-                    verification_code_received_count INTEGER NOT NULL DEFAULT 0,
-                    last_verification_code_received_at TEXT,
-                    verification_codes_json TEXT NOT NULL DEFAULT '[]',
-                    is_available INTEGER NOT NULL DEFAULT 1,
-                    last_error TEXT,
-                    last_failed_at TEXT,
-                    raw_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(provider, activation_id)
+                CREATE TABLE IF NOT EXISTS sms_activations
+                (
+                    id
+                    INTEGER
+                    PRIMARY
+                    KEY
+                    AUTOINCREMENT,
+                    provider
+                    TEXT
+                    NOT
+                    NULL,
+                    service_code
+                    TEXT
+                    NOT
+                    NULL,
+                    mobile_number
+                    TEXT
+                    NOT
+                    NULL,
+                    activation_id
+                    TEXT
+                    NOT
+                    NULL,
+                    activation_cost
+                    TEXT,
+                    currency
+                    TEXT,
+                    country_code
+                    TEXT,
+                    country_phone_code
+                    TEXT,
+                    activation_operator
+                    TEXT,
+                    activation_time
+                    TEXT
+                    NOT
+                    NULL,
+                    activation_end_time
+                    TEXT
+                    NOT
+                    NULL,
+                    can_get_another_sms
+                    INTEGER
+                    NOT
+                    NULL
+                    DEFAULT
+                    0,
+                    verification_code_received_count
+                    INTEGER
+                    NOT
+                    NULL
+                    DEFAULT
+                    0,
+                    last_verification_code_received_at
+                    TEXT,
+                    verification_codes_json
+                    TEXT
+                    NOT
+                    NULL
+                    DEFAULT
+                    '[]',
+                    is_available
+                    INTEGER
+                    NOT
+                    NULL
+                    DEFAULT
+                    1,
+                    last_error
+                    TEXT,
+                    last_failed_at
+                    TEXT,
+                    raw_json
+                    TEXT
+                    NOT
+                    NULL
+                    DEFAULT
+                    '{}',
+                    created_at
+                    TEXT
+                    NOT
+                    NULL,
+                    updated_at
+                    TEXT
+                    NOT
+                    NULL,
+                    UNIQUE
+                (
+                    provider,
+                    activation_id
                 )
+                    )
                 """
             )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_sms_activations_reusable
-                ON sms_activations (
+                    ON sms_activations (
                     provider,
                     service_code,
                     is_available,
@@ -430,9 +495,9 @@ def _serialize_datetime(value: datetime) -> str:
 
 def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        return value.replace(tzinfo=BEIJING_TZ)
+    return value.astimezone(BEIJING_TZ)
 
 
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
+def _beijing_now() -> datetime:
+    return datetime.now(BEIJING_TZ)

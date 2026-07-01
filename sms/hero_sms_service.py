@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from time import monotonic, sleep
 from typing import Any
 
@@ -18,6 +18,10 @@ from sms.activation_store import (
 from sms.sms_service import SmsMobileNumber, SmsService, SmsServiceError
 
 logger = logging.getLogger(__name__)
+
+# HeroSMS 实际返回的 activationTime 可能是无时区字符串，但语义是 UTC+3。
+# 带时区的 ISO 字符串仍按原始时区正常转换。
+HERO_SMS_NAIVE_DATETIME_TZ = timezone(timedelta(hours=3))
 
 
 @dataclass(frozen=True)
@@ -502,14 +506,21 @@ def _parse_optional_datetime(value: Any) -> datetime | None:
 
     iso_value = stripped_value.replace("Z", "+00:00")
     try:
-        return _normalize_datetime(datetime.fromisoformat(iso_value))
+        return _normalize_datetime(
+            datetime.fromisoformat(iso_value),
+            naive_timezone=HERO_SMS_NAIVE_DATETIME_TZ,
+        )
     except ValueError:
         return None
 
 
-def _normalize_datetime(value: datetime) -> datetime:
+def _normalize_datetime(
+        value: datetime,
+        *,
+        naive_timezone=UTC,
+) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+        return value.replace(tzinfo=naive_timezone).astimezone(UTC)
     return value.astimezone(UTC)
 
 
