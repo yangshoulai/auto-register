@@ -52,6 +52,7 @@ class HeroSmsService(SmsService):
     REQUEST_NEW_SMS_STATUS = 3
     POLL_INTERVAL_SECONDS = 5
     CLEANUP_UNRECEIVED_MIN_AGE_SECONDS = 120
+    REUSABLE_ACTIVATION_WAIT_BUFFER_SECONDS = 1.0
 
     def __init__(
             self,
@@ -112,6 +113,7 @@ class HeroSmsService(SmsService):
             return None
 
         records = self._list_reusable_local_activations(excluded_activation_ids)
+        reusable_activation_wait_seconds = 0.0
         if (
                 not records
                 and self._activation_store_config.wait_reusable_activation_enabled
@@ -129,14 +131,20 @@ class HeroSmsService(SmsService):
                 )
             )
             if waitable_record is not None:
+                sleep_seconds = (
+                    waitable_record.wait_seconds
+                    + self.REUSABLE_ACTIVATION_WAIT_BUFFER_SECONDS
+                )
                 logger.info(
                     "HeroSMS 等待本地激活可复用: mobile=%s, activation_id=%s, "
-                    "wait=%.3fs",
+                    "wait=%.3fs, sleep=%.3fs",
                     mask_phone(waitable_record.record.mobile_number),
                     waitable_record.record.activation_id,
                     waitable_record.wait_seconds,
+                    sleep_seconds,
                 )
-                self._sleeper(waitable_record.wait_seconds)
+                reusable_activation_wait_seconds = sleep_seconds
+                self._sleeper(sleep_seconds)
                 records = self._list_reusable_local_activations(
                     excluded_activation_ids,
                 )
@@ -163,7 +171,11 @@ class HeroSmsService(SmsService):
                 mask_phone(record.mobile_number),
                 record.activation_id,
             )
-            return _create_mobile_number_from_record(record, reused_activation=True)
+            return _create_mobile_number_from_record(
+                record,
+                reused_activation=True,
+                reusable_activation_wait_seconds=reusable_activation_wait_seconds,
+            )
 
         return None
 
@@ -228,6 +240,8 @@ class HeroSmsService(SmsService):
         if self._activation_store is None:
             return
 
+        self._delete_expired_activation_records()
+
         try:
             records = self._activation_store.list_unreceived_activations_for_cleanup(
                 provider=self.PROVIDER,
@@ -258,11 +272,42 @@ class HeroSmsService(SmsService):
                     "HeroSMS 清理未收验证码激活失败，已忽略: activation_id=%s",
                     record.activation_id,
                 )
-            finally:
                 self._mark_activation_unavailable(
                     record.activation_id,
                     "初始化清理未收到验证码的 HeroSMS 激活",
                 )
+                continue
+
+            self._delete_activation_record(record.activation_id)
+
+    def _delete_expired_activation_records(self) -> None:
+        if self._activation_store is None:
+            return
+
+        try:
+            deleted_count = self._activation_store.delete_expired_activations(
+                provider=self.PROVIDER,
+                now=self._now(),
+            )
+            if deleted_count > 0:
+                logger.info("HeroSMS 已删除本地过期激活记录: count=%d", deleted_count)
+        except Exception:
+            logger.exception("HeroSMS 删除本地过期激活记录失败，已忽略")
+
+    def _delete_activation_record(self, activation_id: str) -> None:
+        if self._activation_store is None:
+            return
+
+        try:
+            self._activation_store.delete_activation(
+                provider=self.PROVIDER,
+                activation_id=activation_id,
+            )
+        except Exception:
+            logger.exception(
+                "HeroSMS 删除本地激活记录失败，已忽略: activation_id=%s",
+                activation_id,
+            )
 
     def _request_new_sms_for_activation(self, activation_id: str) -> None:
         self._request_raw(
@@ -457,6 +502,7 @@ def _create_mobile_number_from_record(
         record: SmsActivationRecord,
         *,
         reused_activation: bool,
+        reusable_activation_wait_seconds: float = 0,
 ) -> SmsMobileNumber:
     return SmsMobileNumber(
         mobile_number=record.mobile_number,
@@ -472,6 +518,7 @@ def _create_mobile_number_from_record(
             "activation_end_time": record.activation_end_time.isoformat(),
             "activation_operator": record.activation_operator,
             "reused_activation": reused_activation,
+            "reusable_activation_wait_seconds": reusable_activation_wait_seconds,
             "raw": dict(record.raw),
         },
     )

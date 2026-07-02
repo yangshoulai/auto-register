@@ -63,6 +63,7 @@ class RegisterConfig:
     verification_code_wait_timeout: float = 60
     phone_number_retry_attempts: int = 1
     sms_verification_retry_attempts: int = 5
+    oauth_reauth_wait_threshold_seconds: float = 60
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,11 @@ def load_config(path: str | Path = CONFIG_PATH) -> AppConfig:
                 "sms_verification_retry_attempts",
                 5,
             ),
+            oauth_reauth_wait_threshold_seconds=_read_non_negative_float(
+                register_config,
+                "oauth_reauth_wait_threshold_seconds",
+                60,
+            ),
         ),
     )
 
@@ -256,6 +262,15 @@ def _read_non_negative_int(config: dict[str, Any], key: str, default: int) -> in
     if value < 0:
         raise ValueError(f"配置项 {key} 必须大于等于 0")
     return value
+
+
+def _read_non_negative_float(config: dict[str, Any], key: str, default: float) -> float:
+    value = config.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"配置项 {key} 必须是数字")
+    if value < 0:
+        raise ValueError(f"配置项 {key} 必须大于等于 0")
+    return float(value)
 
 
 def _read_string_table(config: dict[str, Any], key: str) -> dict[str, str]:

@@ -441,6 +441,54 @@ class SmsActivationStore:
             error,
         )
 
+    def delete_activation(
+            self,
+            *,
+            provider: str,
+            activation_id: str,
+    ) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM sms_activations
+                WHERE provider = ?
+                  AND activation_id = ?
+                """,
+                (provider, activation_id),
+            )
+            deleted = cursor.rowcount > 0
+        logger.info(
+            "短信激活记录删除完成: provider=%s, activation_id=%s, deleted=%s",
+            provider,
+            activation_id,
+            deleted,
+        )
+        return deleted
+
+    def delete_expired_activations(
+            self,
+            *,
+            provider: str,
+            now: datetime,
+    ) -> int:
+        normalized_now = _normalize_datetime(now)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM sms_activations
+                WHERE provider = ?
+                  AND activation_end_time <= ?
+                """,
+                (provider, _serialize_datetime(normalized_now)),
+            )
+            deleted_count = cursor.rowcount
+        logger.info(
+            "过期短信激活记录清理完成: provider=%s, deleted_count=%d",
+            provider,
+            deleted_count,
+        )
+        return deleted_count
+
     def _ensure_database(self) -> None:
         self._sqlite_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:

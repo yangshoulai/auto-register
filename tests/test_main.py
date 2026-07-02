@@ -179,6 +179,16 @@ class MainTest(unittest.TestCase):
         self.assertEqual(
             flow.find_next_node(
                 AddPhoneNumberNode.DEFAULT_NAME,
+                result=NodeResult.ok(
+                    status=AddPhoneNumberNode.OAUTH_REAUTH_REQUIRED_STATUS
+                ),
+                ctx=ctx,
+            ),
+            SelectCodexAccountNode.DEFAULT_NAME,
+        )
+        self.assertEqual(
+            flow.find_next_node(
+                AddPhoneNumberNode.DEFAULT_NAME,
                 result=NodeResult.ok(status=AddPhoneNumberNode.SUCCESS_STATUS),
                 ctx=ctx,
             ),

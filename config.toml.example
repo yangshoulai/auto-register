@@ -32,6 +32,8 @@ verification_code_wait_timeout = 60
 phone_number_retry_attempts = 5
 # 短信验证码等待超时后，重新从 Codex 账号选择节点开始的最大次数。
 sms_verification_retry_attempts = 5
+# 等待历史手机号超过该秒数后，等待完成需要重新获取 OAuth 链接。
+oauth_reauth_wait_threshold_seconds = 60
 
 [email_service]
 # 当前仅支持自部署 OutlookMail 邮箱服务。

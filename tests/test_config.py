@@ -17,6 +17,7 @@ class ConfigTest(unittest.TestCase):
 verification_code_wait_timeout = 75
 phone_number_retry_attempts = 3
 sms_verification_retry_attempts = 7
+oauth_reauth_wait_threshold_seconds = 12.5
 """.strip(),
                 encoding="utf-8",
             )
@@ -26,6 +27,7 @@ sms_verification_retry_attempts = 7
         self.assertEqual(config.register.verification_code_wait_timeout, 75)
         self.assertEqual(config.register.phone_number_retry_attempts, 3)
         self.assertEqual(config.register.sms_verification_retry_attempts, 7)
+        self.assertEqual(config.register.oauth_reauth_wait_threshold_seconds, 12.5)
 
     def test_load_config_uses_default_register_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -36,6 +38,7 @@ sms_verification_retry_attempts = 7
         self.assertEqual(config.register.verification_code_wait_timeout, 60)
         self.assertEqual(config.register.phone_number_retry_attempts, 1)
         self.assertEqual(config.register.sms_verification_retry_attempts, 5)
+        self.assertEqual(config.register.oauth_reauth_wait_threshold_seconds, 60)
 
     def test_load_config_reads_http_service_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

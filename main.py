@@ -148,6 +148,10 @@ def build_register_flow() -> RegisterFlow:
             ],
             add_phone_number_node.name: [
                 Transition.when_status(
+                    AddPhoneNumberNode.OAUTH_REAUTH_REQUIRED_STATUS,
+                    select_codex_account_node.name,
+                ),
+                Transition.when_status(
                     AddPhoneNumberNode.SUCCESS_STATUS,
                     wait_sms_verification_code_node.name,
                 )

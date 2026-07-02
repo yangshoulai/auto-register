@@ -49,6 +49,7 @@ class SmsBowerService(SmsService):
     REQUEST_NEW_SMS_STATUS = 3
     REQUEST_NEW_SMS_SUCCESS_STATUSES = {"ACCESS_READY", "ACCESS_RETRY_GET"}
     POLL_INTERVAL_SECONDS = 5
+    REUSABLE_ACTIVATION_WAIT_BUFFER_SECONDS = 1.0
 
     def __init__(
             self,
@@ -110,6 +111,7 @@ class SmsBowerService(SmsService):
             return None
 
         records = self._list_reusable_local_activations(excluded_activation_ids)
+        reusable_activation_wait_seconds = 0.0
         if (
             not records
             and self._activation_store_config.wait_reusable_activation_enabled
@@ -127,14 +129,20 @@ class SmsBowerService(SmsService):
                 )
             )
             if waitable_record is not None:
+                sleep_seconds = (
+                    waitable_record.wait_seconds
+                    + self.REUSABLE_ACTIVATION_WAIT_BUFFER_SECONDS
+                )
                 logger.info(
                     "SMSBower 等待本地激活可复用: mobile=%s, activation_id=%s, "
-                    "wait=%.3fs",
+                    "wait=%.3fs, sleep=%.3fs",
                     mask_phone(waitable_record.record.mobile_number),
                     waitable_record.record.activation_id,
                     waitable_record.wait_seconds,
+                    sleep_seconds,
                 )
-                self._sleeper(waitable_record.wait_seconds)
+                reusable_activation_wait_seconds = sleep_seconds
+                self._sleeper(sleep_seconds)
                 records = self._list_reusable_local_activations(
                     excluded_activation_ids,
                 )
@@ -161,7 +169,11 @@ class SmsBowerService(SmsService):
                 mask_phone(record.mobile_number),
                 record.activation_id,
             )
-            return _create_mobile_number_from_record(record, reused_activation=True)
+            return _create_mobile_number_from_record(
+                record,
+                reused_activation=True,
+                reusable_activation_wait_seconds=reusable_activation_wait_seconds,
+            )
 
         return None
 
@@ -432,6 +444,7 @@ def _create_mobile_number_from_record(
         record: SmsActivationRecord,
         *,
         reused_activation: bool,
+        reusable_activation_wait_seconds: float = 0,
 ) -> SmsMobileNumber:
     return SmsMobileNumber(
         mobile_number=record.mobile_number,
@@ -445,6 +458,7 @@ def _create_mobile_number_from_record(
             "activation_end_time": record.activation_end_time.isoformat(),
             "activation_operator": record.activation_operator,
             "reused_activation": reused_activation,
+            "reusable_activation_wait_seconds": reusable_activation_wait_seconds,
             "raw": dict(record.raw),
         },
     )

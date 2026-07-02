@@ -139,7 +139,7 @@ class HeroSmsServiceTest(unittest.TestCase):
                     service_code=HeroSmsService.SERVICE_CODE,
                     mobile_number="79584000001",
                     activation_id="635468021",
-                    activation_time=datetime(2022, 6, 1, 16, 59, tzinfo=UTC),
+                    activation_time=datetime(2022, 6, 1, 17, 14, tzinfo=UTC),
                     activation_end_time=datetime(2022, 6, 1, 18, 59, tzinfo=UTC),
                     can_get_another_sms=True,
                 )
@@ -168,6 +168,80 @@ class HeroSmsServiceTest(unittest.TestCase):
                 "api_key": "api-key",
             },
         )
+
+    def test_cleanup_unreceived_activation_deletes_record_after_cancel_success(
+        self,
+    ) -> None:
+        session = FakeSession([{"status": "ok"}])
+        now = datetime(2026, 7, 1, 10, 40, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider=HeroSmsService.PROVIDER,
+                    service_code=HeroSmsService.SERVICE_CODE,
+                    mobile_number="79584000001",
+                    activation_id="635468021",
+                    activation_time=now - timedelta(minutes=5),
+                    activation_end_time=now + timedelta(minutes=20),
+                    can_get_another_sms=True,
+                )
+            )
+
+            HeroSmsService(
+                build_config(),
+                http_service=build_http_service(session),
+                activation_store=store,
+                now=lambda: now,
+            )
+            records = store.list_unreceived_activations_for_cleanup(
+                provider=HeroSmsService.PROVIDER,
+                now=now,
+                min_age_seconds=HeroSmsService.CLEANUP_UNRECEIVED_MIN_AGE_SECONDS,
+            )
+
+        self.assertEqual(
+            session.requests[0]["params"],
+            {
+                "action": "setStatus",
+                "id": "635468021",
+                "status": 8,
+                "api_key": "api-key",
+            },
+        )
+        self.assertEqual(records, [])
+
+    def test_cleanup_deletes_expired_activation_without_cancel_request(self) -> None:
+        session = FakeSession([])
+        now = datetime(2026, 7, 1, 10, 40, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider=HeroSmsService.PROVIDER,
+                    service_code=HeroSmsService.SERVICE_CODE,
+                    mobile_number="79584000001",
+                    activation_id="635468021",
+                    activation_time=now - timedelta(minutes=30),
+                    activation_end_time=now - timedelta(seconds=1),
+                    can_get_another_sms=True,
+                )
+            )
+
+            HeroSmsService(
+                build_config(),
+                http_service=build_http_service(session),
+                activation_store=store,
+                now=lambda: now,
+            )
+            records = store.list_unreceived_activations_for_cleanup(
+                provider=HeroSmsService.PROVIDER,
+                now=now,
+                min_age_seconds=HeroSmsService.CLEANUP_UNRECEIVED_MIN_AGE_SECONDS,
+            )
+
+        self.assertEqual(session.requests, [])
+        self.assertEqual(records, [])
 
     def test_get_mobile_number_waits_for_soon_reusable_local_activation(self) -> None:
         session = FakeSession([{"status": "ok"}])
@@ -213,7 +287,11 @@ class HeroSmsServiceTest(unittest.TestCase):
             mobile_number = service.get_mobile_number()
 
         self.assertEqual(mobile_number.mobile_number, "79584000001")
-        self.assertEqual(clock.sleeps, [10.0])
+        self.assertEqual(
+            mobile_number.get_attribute("reusable_activation_wait_seconds"),
+            11.0,
+        )
+        self.assertEqual(clock.sleeps, [11.0])
         self.assertEqual(
             session.requests[0]["params"],
             {

@@ -209,6 +209,75 @@ class SmsActivationStoreTest(unittest.TestCase):
 
             self.assertIsNone(waitable_record)
 
+    def test_delete_activation_removes_matching_record(self) -> None:
+        now = datetime(2026, 7, 1, 10, 40, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider="hero_sms",
+                    service_code="dr",
+                    mobile_number="27628726006",
+                    activation_id="activation-id",
+                    activation_time=now - timedelta(minutes=5),
+                    activation_end_time=now + timedelta(minutes=20),
+                    can_get_another_sms=True,
+                )
+            )
+
+            deleted = store.delete_activation(
+                provider="hero_sms",
+                activation_id="activation-id",
+            )
+            records = store.list_unreceived_activations_for_cleanup(
+                provider="hero_sms",
+                now=now,
+                min_age_seconds=120,
+            )
+
+            self.assertTrue(deleted)
+            self.assertEqual(records, [])
+
+    def test_delete_expired_activations_removes_only_expired_records(self) -> None:
+        now = datetime(2026, 7, 1, 10, 40, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider="hero_sms",
+                    service_code="dr",
+                    mobile_number="27628726006",
+                    activation_id="expired",
+                    activation_time=now - timedelta(minutes=30),
+                    activation_end_time=now - timedelta(seconds=1),
+                    can_get_another_sms=True,
+                )
+            )
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider="hero_sms",
+                    service_code="dr",
+                    mobile_number="27628726007",
+                    activation_id="active",
+                    activation_time=now - timedelta(minutes=30),
+                    activation_end_time=now + timedelta(minutes=20),
+                    can_get_another_sms=True,
+                )
+            )
+
+            deleted_count = store.delete_expired_activations(
+                provider="hero_sms",
+                now=now,
+            )
+            records = store.list_unreceived_activations_for_cleanup(
+                provider="hero_sms",
+                now=now,
+                min_age_seconds=120,
+            )
+
+            self.assertEqual(deleted_count, 1)
+            self.assertEqual([record.activation_id for record in records], ["active"])
+
 
 if __name__ == "__main__":
     unittest.main()

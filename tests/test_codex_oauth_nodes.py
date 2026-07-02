@@ -139,6 +139,9 @@ class FakeSmsService:
         self.code_calls: list[dict[str, object]] = []
         self.excluded_activation_ids_calls: list[set[str]] = []
 
+    def set_mobile_number(self, mobile_number: SmsMobileNumber) -> None:
+        self.mobile_number = mobile_number
+
     def get_mobile_number(self, excluded_activation_ids=None) -> SmsMobileNumber:
         self.excluded_activation_ids_calls.append(set(excluded_activation_ids or ()))
         return self.mobile_number
@@ -303,6 +306,95 @@ class AddPhoneNumberNodeTest(unittest.TestCase):
                     "is_verification_code_received": False,
                 }
             ],
+        )
+
+    def test_execute_requests_oauth_reauth_when_reusable_wait_exceeds_threshold(
+        self,
+    ) -> None:
+        tab = FakeAddPhoneTab()
+        mobile_number = SmsMobileNumber(
+            mobile_number="79584123456",
+            attributes={
+                "activation_id": "activation-id",
+                "reusable_activation_wait_seconds": 90,
+            },
+        )
+        sms_service = FakeSmsService()
+        sms_service.set_mobile_number(mobile_number)
+        ctx = RegisterContext(
+            app_context=FakeAppContext(
+                sms_service=sms_service,
+                config=AppConfig(
+                    register=RegisterConfig(
+                        oauth_reauth_wait_threshold_seconds=60,
+                    ),
+                ),
+            ),
+            state={"current_tab": tab, "account": _account()},
+        )
+
+        result = asyncio.run(AddPhoneNumberNode().execute(ctx))
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.status,
+            AddPhoneNumberNode.OAUTH_REAUTH_REQUIRED_STATUS,
+        )
+        self.assertEqual(sms_service.excluded_activation_ids_calls, [set()])
+        self.assertEqual(tab.submit_button.clicks, [])
+        self.assertIs(
+            result.data[AddPhoneNumberNode.SMS_MOBILE_NUMBER_STATE_KEY],
+            mobile_number,
+        )
+        self.assertTrue(
+            result.data[
+                AddPhoneNumberNode.SMS_MOBILE_OAUTH_REAUTH_PENDING_STATE_KEY
+            ]
+        )
+
+    def test_execute_uses_pending_mobile_number_after_oauth_reauth(self) -> None:
+        async def fill_text_success(*args, **kwargs) -> None:
+            return None
+
+        tab = FakeAddPhoneTab()
+        pending_mobile_number = SmsMobileNumber(
+            mobile_number="79584123456",
+            attributes={
+                "activation_id": "activation-id",
+                "reusable_activation_wait_seconds": 90,
+            },
+        )
+        sms_service = FakeSmsService()
+        ctx = RegisterContext(
+            app_context=FakeAppContext(
+                sms_service=sms_service,
+                config=AppConfig(
+                    register=RegisterConfig(
+                        oauth_reauth_wait_threshold_seconds=60,
+                    ),
+                ),
+            ),
+            state={
+                "current_tab": tab,
+                "account": _account(),
+                AddPhoneNumberNode.SMS_MOBILE_NUMBER_STATE_KEY: pending_mobile_number,
+                AddPhoneNumberNode.SMS_MOBILE_OAUTH_REAUTH_PENDING_STATE_KEY: True,
+            },
+        )
+
+        with patch(
+            "register.nodes.add_phone_number_node.PydollClipboardInput.fill_text",
+            new=fill_text_success,
+        ):
+            result = asyncio.run(AddPhoneNumberNode().execute(ctx))
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, AddPhoneNumberNode.SUCCESS_STATUS)
+        self.assertEqual(sms_service.excluded_activation_ids_calls, [])
+        self.assertEqual(tab.submit_button.clicks, [{"humanize": True}])
+        self.assertIs(
+            result.data[AddPhoneNumberNode.SMS_MOBILE_NUMBER_STATE_KEY],
+            pending_mobile_number,
         )
 
 

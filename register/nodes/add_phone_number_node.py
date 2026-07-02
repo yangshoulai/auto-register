@@ -28,9 +28,11 @@ class AddPhoneNumberNode(RegisterNode):
     CURRENT_TAB_STATE_KEY = DEFAULT_CURRENT_TAB_STATE_KEY
     ACCOUNT_STATE_KEY = FillEmailAndSubmitNode.ACCOUNT_STATE_KEY
     SMS_MOBILE_NUMBER_STATE_KEY = "sms_mobile_number"
+    SMS_MOBILE_OAUTH_REAUTH_PENDING_STATE_KEY = "sms_mobile_oauth_reauth_pending"
     TRIED_SMS_ACTIVATION_IDS_STATE_KEY = "tried_sms_activation_ids"
     PHONE_SUBMITTED_AT_STATE_KEY = "phone_submitted_at"
     PHONE_VERIFICATION_URL_STATE_KEY = "phone_verification_url"
+    REUSABLE_ACTIVATION_WAIT_SECONDS_STATE_KEY = "sms_reusable_activation_wait_seconds"
     PHONE_INPUT_SELECTOR = "input[id='tel']"
     SMS_INPUT_SELECTOR = "label > input[value='sms']"
     WHATSAPP_INPUT_SELECTOR = "label > input[value='whatsapp']"
@@ -49,6 +51,7 @@ class AddPhoneNumberNode(RegisterNode):
     PHONE_VERIFICATION_URL_PART = "/phone-verification"
     RESULT_WAIT_TIMEOUT_SECONDS = 30
     SUCCESS_STATUS = "phone_submitted"
+    OAUTH_REAUTH_REQUIRED_STATUS = "phone_waited_oauth_reauth_required"
     FAILED_STATUS = "phone_submit_failed"
     PHONE_ERROR_STATUS = "phone_submit_error"
     MISSING_SMS_SERVICE_STATUS = "sms_service_not_configured"
@@ -119,13 +122,31 @@ class AddPhoneNumberNode(RegisterNode):
             raise RuntimeError("注册上下文缺少短信服务")
 
         excluded_activation_ids = _read_tried_activation_ids(ctx)
-        logger.info(
-            "向短信服务申请手机号: excluded_activation_ids=%s",
-            sorted(excluded_activation_ids),
+        pending_oauth_reauth_mobile_number = _take_pending_oauth_reauth_mobile_number(
+            ctx,
         )
-        mobile_number = ctx.app_context.sms_service.get_mobile_number(
-            excluded_activation_ids=excluded_activation_ids,
-        )
+        if pending_oauth_reauth_mobile_number is None:
+            logger.info(
+                "向短信服务申请手机号: excluded_activation_ids=%s",
+                sorted(excluded_activation_ids),
+            )
+            mobile_number = ctx.app_context.sms_service.get_mobile_number(
+                excluded_activation_ids=excluded_activation_ids,
+            )
+            oauth_reauth_result = await self._build_oauth_reauth_result_if_needed(
+                ctx,
+                tab,
+                mobile_number,
+            )
+            if oauth_reauth_result is not None:
+                return oauth_reauth_result
+        else:
+            mobile_number = pending_oauth_reauth_mobile_number
+            logger.info(
+                "OAuth 重新认证完成，继续使用等待后的历史手机号: mobile=%s",
+                mask_phone(mobile_number.mobile_number),
+            )
+
         _remember_tried_activation_id(ctx, mobile_number)
         normalized_mobile_number = _normalize_mobile_number(mobile_number.mobile_number)
         account.mobile = normalized_mobile_number
@@ -202,6 +223,43 @@ class AddPhoneNumberNode(RegisterNode):
 
         logger.debug("手机号验证码页面已就绪")
         return NodeResult.ok(status=self.SUCCESS_STATUS, data=result_data)
+
+    async def _build_oauth_reauth_result_if_needed(
+            self,
+            ctx: RegisterContext,
+            tab: Tab,
+            mobile_number: SmsMobileNumber,
+    ) -> NodeResult | None:
+        if ctx.app_context is None:
+            raise RuntimeError("注册上下文缺少 AppContext，无法判断 OAuth 重试阈值")
+
+        wait_seconds = _read_mobile_float_attribute(
+            mobile_number,
+            "reusable_activation_wait_seconds",
+        )
+        reauth_threshold_seconds = (
+            ctx.app_context.config.register.oauth_reauth_wait_threshold_seconds
+        )
+        if wait_seconds <= reauth_threshold_seconds:
+            return None
+
+        current_url = await tab.current_url
+        logger.warning(
+            "等待历史手机号可用耗时超过 OAuth 重试阈值，准备重新认证: "
+            "wait=%.3fs, threshold=%.3fs, mobile=%s",
+            wait_seconds,
+            reauth_threshold_seconds,
+            mask_phone(mobile_number.mobile_number),
+        )
+        return NodeResult.ok(
+            status=self.OAUTH_REAUTH_REQUIRED_STATUS,
+            data={
+                self.SMS_MOBILE_NUMBER_STATE_KEY: mobile_number,
+                self.SMS_MOBILE_OAUTH_REAUTH_PENDING_STATE_KEY: True,
+                self.REUSABLE_ACTIVATION_WAIT_SECONDS_STATE_KEY: wait_seconds,
+                self.PHONE_VERIFICATION_URL_STATE_KEY: current_url,
+            },
+        )
 
     async def _select_sms_verification_method(self, tab: Tab) -> None:
         sms_label = await _get_input_label(
@@ -316,6 +374,42 @@ def _remember_tried_activation_id(
         activation_id,
         len(tried_activation_ids),
     )
+
+
+def _take_pending_oauth_reauth_mobile_number(
+        ctx: RegisterContext,
+) -> SmsMobileNumber | None:
+    is_pending = bool(
+        ctx.get_value(
+            AddPhoneNumberNode.SMS_MOBILE_OAUTH_REAUTH_PENDING_STATE_KEY,
+            False,
+        )
+    )
+    if not is_pending:
+        return None
+
+    mobile_number = ctx.get_value(AddPhoneNumberNode.SMS_MOBILE_NUMBER_STATE_KEY)
+    ctx.set_value(AddPhoneNumberNode.SMS_MOBILE_OAUTH_REAUTH_PENDING_STATE_KEY, False)
+    if isinstance(mobile_number, SmsMobileNumber):
+        return mobile_number
+    return None
+
+
+def _read_mobile_float_attribute(
+        mobile_number: SmsMobileNumber,
+        key: str,
+) -> float:
+    value = mobile_number.get_attribute(key, 0)
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0
+    return 0
 
 
 def _create_result_data(
