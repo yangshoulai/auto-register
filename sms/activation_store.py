@@ -46,6 +46,13 @@ class VerificationCodeEntry:
     raw: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class WaitableSmsActivationRecord:
+    record: SmsActivationRecord
+    reusable_at: datetime
+    wait_seconds: float
+
+
 class SmsActivationStore:
     """
     本地短信激活 SQLite 存储。
@@ -180,6 +187,101 @@ class SmsActivationStore:
             min_remaining_seconds,
         )
         return records
+
+    def find_next_waitable_reusable_activation(
+            self,
+            *,
+            provider: str,
+            service_code: str,
+            excluded_activation_ids: Collection[str] | None,
+            now: datetime,
+            reuse_min_interval_seconds: float,
+            min_remaining_seconds: float,
+    ) -> WaitableSmsActivationRecord | None:
+        normalized_now = _normalize_datetime(now)
+        min_usable_at = normalized_now - timedelta(
+            seconds=reuse_min_interval_seconds,
+        )
+        min_activation_end_time = normalized_now + timedelta(
+            seconds=min_remaining_seconds,
+        )
+        excluded_ids = {str(value) for value in excluded_activation_ids or ()}
+        params: list[Any] = [
+            provider,
+            service_code,
+            _serialize_datetime(min_usable_at),
+            _serialize_datetime(min_activation_end_time),
+        ]
+        excluded_clause = ""
+        if excluded_ids:
+            placeholders = ",".join("?" for _ in excluded_ids)
+            excluded_clause = f"AND activation_id NOT IN ({placeholders})"
+            params.extend(sorted(excluded_ids))
+
+        sql = f"""
+            SELECT *
+            FROM sms_activations
+            WHERE provider = ?
+              AND service_code = ?
+              AND is_available = 1
+              AND can_get_another_sms = 1
+              AND last_verification_code_usable_at IS NOT NULL
+              AND last_verification_code_usable_at > ?
+              AND activation_end_time > ?
+              {excluded_clause}
+            ORDER BY last_verification_code_usable_at ASC
+        """
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+
+        waitable_records: list[WaitableSmsActivationRecord] = []
+        for row in rows:
+            record = _row_to_record(row)
+            if record.last_verification_code_usable_at is None:
+                continue
+
+            reusable_at = record.last_verification_code_usable_at + timedelta(
+                seconds=reuse_min_interval_seconds,
+            )
+            wait_seconds = (reusable_at - normalized_now).total_seconds()
+            if wait_seconds <= 0:
+                continue
+            if record.activation_end_time <= reusable_at + timedelta(
+                    seconds=min_remaining_seconds,
+            ):
+                continue
+
+            waitable_records.append(
+                WaitableSmsActivationRecord(
+                    record=record,
+                    reusable_at=reusable_at,
+                    wait_seconds=wait_seconds,
+                )
+            )
+
+        if not waitable_records:
+            logger.info(
+                "本地暂无值得等待的可复用短信激活: provider=%s, excluded_count=%d, "
+                "min_remaining=%s",
+                provider,
+                len(excluded_ids),
+                min_remaining_seconds,
+            )
+            return None
+
+        waitable_records.sort(
+            key=lambda item: (item.reusable_at, item.record.activation_end_time)
+        )
+        next_record = waitable_records[0]
+        logger.info(
+            "本地找到最近即将可复用短信激活: provider=%s, activation_id=%s, "
+            "wait_seconds=%.3f, reusable_at=%s",
+            provider,
+            next_record.record.activation_id,
+            next_record.wait_seconds,
+            next_record.reusable_at.isoformat(),
+        )
+        return next_record
 
     def list_unreceived_activations_for_cleanup(
             self,

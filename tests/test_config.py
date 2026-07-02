@@ -95,6 +95,7 @@ provider = "hero_sms"
 sqlite_path = "runtime/sms.db"
 reuse_local_activation = false
 reuse_min_interval_seconds = 600
+wait_reusable_activation_enabled = true
 
 [sms_service.providers.hero_sms]
 base_url = "https://hero-sms.com/stubs/handler_api.php"
@@ -124,6 +125,9 @@ verification_code_wait_timeout = 125
         self.assertEqual(
             config.sms_service.activation_store.reuse_min_interval_seconds,
             600,
+        )
+        self.assertTrue(
+            config.sms_service.activation_store.wait_reusable_activation_enabled,
         )
 
     def test_load_config_reads_account_export_service_provider_options(self) -> None:

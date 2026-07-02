@@ -109,16 +109,36 @@ class SmsBowerService(SmsService):
         if self._activation_store is None:
             return None
 
-        records = self._activation_store.list_reusable_activations(
-            provider=self.PROVIDER,
-            service_code=self.SERVICE_CODE,
-            excluded_activation_ids=excluded_activation_ids,
-            now=self._now(),
-            reuse_min_interval_seconds=(
-                self._activation_store_config.reuse_min_interval_seconds
-            ),
-            min_remaining_seconds=self._config.verification_code_wait_timeout,
-        )
+        records = self._list_reusable_local_activations(excluded_activation_ids)
+        if (
+            not records
+            and self._activation_store_config.wait_reusable_activation_enabled
+        ):
+            waitable_record = (
+                self._activation_store.find_next_waitable_reusable_activation(
+                    provider=self.PROVIDER,
+                    service_code=self.SERVICE_CODE,
+                    excluded_activation_ids=excluded_activation_ids,
+                    now=self._now(),
+                    reuse_min_interval_seconds=(
+                        self._activation_store_config.reuse_min_interval_seconds
+                    ),
+                    min_remaining_seconds=self._config.verification_code_wait_timeout,
+                )
+            )
+            if waitable_record is not None:
+                logger.info(
+                    "SMSBower 等待本地激活可复用: mobile=%s, activation_id=%s, "
+                    "wait=%.3fs",
+                    mask_phone(waitable_record.record.mobile_number),
+                    waitable_record.record.activation_id,
+                    waitable_record.wait_seconds,
+                )
+                self._sleeper(waitable_record.wait_seconds)
+                records = self._list_reusable_local_activations(
+                    excluded_activation_ids,
+                )
+
         for record in records:
             try:
                 logger.info(
@@ -144,6 +164,23 @@ class SmsBowerService(SmsService):
             return _create_mobile_number_from_record(record, reused_activation=True)
 
         return None
+
+    def _list_reusable_local_activations(
+            self,
+            excluded_activation_ids: Collection[str] | None,
+    ) -> list[SmsActivationRecord]:
+        if self._activation_store is None:
+            return []
+        return self._activation_store.list_reusable_activations(
+            provider=self.PROVIDER,
+            service_code=self.SERVICE_CODE,
+            excluded_activation_ids=excluded_activation_ids,
+            now=self._now(),
+            reuse_min_interval_seconds=(
+                self._activation_store_config.reuse_min_interval_seconds
+            ),
+            min_remaining_seconds=self._config.verification_code_wait_timeout,
+        )
 
     def _request_new_mobile_number(self) -> SmsMobileNumber:
         payload = self._request_json(

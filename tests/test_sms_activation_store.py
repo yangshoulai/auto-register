@@ -126,6 +126,89 @@ class SmsActivationStoreTest(unittest.TestCase):
                 ["enough-time"],
             )
 
+    def test_find_next_waitable_reusable_activation_returns_soonest_record(self) -> None:
+        now = datetime(2026, 7, 1, 10, 40, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider="hero_sms",
+                    service_code="dr",
+                    mobile_number="27628726006",
+                    activation_id="soon",
+                    activation_time=now - timedelta(minutes=5),
+                    activation_end_time=now + timedelta(minutes=20),
+                    can_get_another_sms=True,
+                )
+            )
+            store.mark_verification_code_usable(
+                provider="hero_sms",
+                activation_id="soon",
+                usable_at=now - timedelta(minutes=14),
+            )
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider="hero_sms",
+                    service_code="dr",
+                    mobile_number="27628726007",
+                    activation_id="later",
+                    activation_time=now - timedelta(minutes=5),
+                    activation_end_time=now + timedelta(minutes=25),
+                    can_get_another_sms=True,
+                )
+            )
+            store.mark_verification_code_usable(
+                provider="hero_sms",
+                activation_id="later",
+                usable_at=now - timedelta(minutes=10),
+            )
+
+            waitable_record = store.find_next_waitable_reusable_activation(
+                provider="hero_sms",
+                service_code="dr",
+                excluded_activation_ids=None,
+                now=now,
+                reuse_min_interval_seconds=900,
+                min_remaining_seconds=125,
+            )
+
+            self.assertIsNotNone(waitable_record)
+            assert waitable_record is not None
+            self.assertEqual(waitable_record.record.activation_id, "soon")
+            self.assertEqual(waitable_record.wait_seconds, 60)
+
+    def test_find_next_waitable_reusable_activation_skips_expiring_record(self) -> None:
+        now = datetime(2026, 7, 1, 10, 40, tzinfo=UTC)
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider="hero_sms",
+                    service_code="dr",
+                    mobile_number="27628726006",
+                    activation_id="expires-too-soon",
+                    activation_time=now - timedelta(minutes=5),
+                    activation_end_time=now + timedelta(seconds=90),
+                    can_get_another_sms=True,
+                )
+            )
+            store.mark_verification_code_usable(
+                provider="hero_sms",
+                activation_id="expires-too-soon",
+                usable_at=now - timedelta(minutes=14),
+            )
+
+            waitable_record = store.find_next_waitable_reusable_activation(
+                provider="hero_sms",
+                service_code="dr",
+                excluded_activation_ids=None,
+                now=now,
+                reuse_min_interval_seconds=900,
+                min_remaining_seconds=125,
+            )
+
+            self.assertIsNone(waitable_record)
+
 
 if __name__ == "__main__":
     unittest.main()

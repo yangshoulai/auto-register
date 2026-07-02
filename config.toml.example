@@ -64,6 +64,8 @@ sqlite_path = "data/sms_activations.db"
 reuse_local_activation = true
 # 同一个激活距离上次成功获取验证码至少过去多少秒后才允许复用，默认 15 分钟。
 reuse_min_interval_seconds = 900
+# 当前没有立即可复用号码时，是否等待最近即将可用的历史号码。
+wait_reusable_activation_enabled = false
 
 [sms_service.providers.hero_sms]
 base_url = "https://hero-sms.com/stubs/handler_api.php"

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
 from core.config import SmsActivationStoreConfig, SmsServiceConfig
 from core.http_service import HttpService
-from sms.activation_store import SmsActivationRecord, SmsActivationStore
+from sms.activation_store import (
+    SmsActivationRecord,
+    SmsActivationStore,
+    VerificationCodeEntry,
+)
 from sms.hero_sms_service import (
     HeroSmsService,
     HeroSmsServiceConfig,
@@ -70,6 +74,19 @@ class FakePollClock:
     def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds)
         self.current += seconds
+
+
+class FakeDateTimeClock:
+    def __init__(self, current: datetime) -> None:
+        self.current = current
+        self.sleeps: list[float] = []
+
+    def now(self) -> datetime:
+        return self.current
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.current += timedelta(seconds=seconds)
 
 
 class HeroSmsServiceTest(unittest.TestCase):
@@ -142,6 +159,61 @@ class HeroSmsServiceTest(unittest.TestCase):
         self.assertEqual(mobile_number.mobile_number, "79584000001")
         self.assertEqual(mobile_number.get_attribute("activation_id"), "635468021")
         self.assertTrue(mobile_number.get_attribute("reused_activation"))
+        self.assertEqual(
+            session.requests[0]["params"],
+            {
+                "action": "setStatus",
+                "id": "635468021",
+                "status": 3,
+                "api_key": "api-key",
+            },
+        )
+
+    def test_get_mobile_number_waits_for_soon_reusable_local_activation(self) -> None:
+        session = FakeSession([{"status": "ok"}])
+        clock = FakeDateTimeClock(datetime(2026, 7, 1, 10, 40, tzinfo=UTC))
+        with TemporaryDirectory() as temp_dir:
+            store = SmsActivationStore(Path(temp_dir) / "sms.db")
+            store.upsert_activation(
+                SmsActivationRecord(
+                    provider=HeroSmsService.PROVIDER,
+                    service_code=HeroSmsService.SERVICE_CODE,
+                    mobile_number="79584000001",
+                    activation_id="635468021",
+                    activation_time=clock.now() - timedelta(minutes=5),
+                    activation_end_time=clock.now() + timedelta(minutes=20),
+                    can_get_another_sms=True,
+                )
+            )
+            store.record_verification_code(
+                provider=HeroSmsService.PROVIDER,
+                activation_id="635468021",
+                entry=VerificationCodeEntry(
+                    code="123456",
+                    received_at=clock.now() - timedelta(seconds=890),
+                ),
+            )
+            store.mark_verification_code_usable(
+                provider=HeroSmsService.PROVIDER,
+                activation_id="635468021",
+                usable_at=clock.now() - timedelta(seconds=890),
+            )
+            service = HeroSmsService(
+                build_config(),
+                http_service=build_http_service(session),
+                activation_store=store,
+                activation_store_config=SmsActivationStoreConfig(
+                    reuse_min_interval_seconds=900,
+                    wait_reusable_activation_enabled=True,
+                ),
+                sleeper=clock.sleep,
+                now=clock.now,
+            )
+
+            mobile_number = service.get_mobile_number()
+
+        self.assertEqual(mobile_number.mobile_number, "79584000001")
+        self.assertEqual(clock.sleeps, [10.0])
         self.assertEqual(
             session.requests[0]["params"],
             {

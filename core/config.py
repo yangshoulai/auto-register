@@ -32,6 +32,7 @@ class SmsActivationStoreConfig:
     sqlite_path: str = "data/sms_activations.db"
     reuse_local_activation: bool = True
     reuse_min_interval_seconds: float = 900
+    wait_reusable_activation_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,11 @@ def load_config(path: str | Path = CONFIG_PATH) -> AppConfig:
                     sms_activation_store_config,
                     "reuse_min_interval_seconds",
                     900,
+                ),
+                wait_reusable_activation_enabled=_read_bool(
+                    sms_activation_store_config,
+                    "wait_reusable_activation_enabled",
+                    False,
                 ),
             ),
         ),
